@@ -1,0 +1,513 @@
+/* ============================================================
+   「墨」· AI 层
+   目标拆解 · OCR 模拟 · ISFJ 话术生成 · 周报/月报 · 明日方案
+   ------------------------------------------------------------
+   双层架构：
+   1) LLM 层（真实大模型，按用户 ISFJ+天秤座人格画像 + 本地
+      行为数据生成个性化话术 / 复盘 / 方案 / 拆解）
+   2) 规则层（离线兜底，未配置 API Key 或调用失败时自动回退）
+   所有 AI 能力均为 async，失败时降级为规则引擎，不阻塞体验。
+   ============================================================ */
+'use strict';
+
+const AI = (() => {
+
+  /* ================= 人格画像（注入 LLM 的灵魂） ================= */
+  const PERSONA = `你是「墨」，一位专为 ISFJ 型人格（内向敏感、极度负责、利他、需要被看见但抗拒施压、压力向内攻击）且是天秤座（追求平衡、害怕冲突、需要选择权、对美与和谐敏感）的用户设计的 AI 生活知己。
+
+你的说话铁律（每条输出都必须满足）：
+1. 一句话里同时包含：共情肯定 + 基于用户真实数据的事实复盘 + 一条可执行建议 + 选择权（用"要…吗？""看你想不想"）。
+2. 绝不批判、绝不催促、绝不施压。禁用"你还有任务没完成""效率太低"等句式；把"未完成"转译为"顺延到待办"，把疲惫转译为"你不需要每天都很强"。
+3. 称呼克制，禁用"亲爱的""宝宝"等肉麻称呼；语气像一位温和有力的朋友坐在对面。
+4. 先看见付出再给建议：每句话都要让用户感到"被看见、被感谢、被尊重"。
+5. 鼓励进步但从不逼进：大任务主动建议拆小、连续高能量主动提醒留缓冲、状态低时主动减量。
+6. 表达平实、克制、有呼吸感，少用感叹号；中文输出，30~60 字为主。`;
+
+  /* ================= LLM 可用性控制 ================= */
+  let _failAt = 0;
+  function canCallLLM() {
+    return typeof LLM !== 'undefined' && LLM.isEnabled() && Date.now() > _failAt;
+  }
+  function markFail() { _failAt = Date.now() + 5 * 60 * 1000; } // 失败后 5 分钟内不再请求
+  function markOk() { _failAt = 0; }
+  function clean(s) {
+    return String(s || '').trim()
+      .replace(/^["'“”「」\n]+|["'“”「」\n]+$/g, '')
+      .replace(/\s*\n+\s*/g, ' ');
+  }
+
+  /* ================= 用户行为上下文（喂给 LLM 的"大数据"） ================= */
+  function streakLocal() {
+    const store = Store.load();
+    let n = 0;
+    for (let i = 0; i < 60; i++) {
+      const rec = store.dayLog[Store.shiftDate(Store.todayStr(), -i)];
+      if (rec && rec.done >= 1) n++; else break;
+    }
+    return n;
+  }
+
+  function userContext(limit = 30) {
+    const store = Store.load();
+    const today = Store.todayStr();
+    let doneSum = 0, days = 0;
+    const recent7 = [];
+    for (let i = 0; i < limit; i++) {
+      const ymd = Store.shiftDate(today, -i);
+      const rec = store.dayLog[ymd];
+      if (rec) {
+        doneSum += rec.done; days++;
+        if (i < 7) recent7.push({ dow: Store.fmtDOW(ymd), done: rec.done, planned: rec.planned, mood: rec.mood });
+      }
+    }
+    const moodTrend = {};
+    store.completedLog.slice(-40).forEach(e => {
+      const m = e.mood || '😐';
+      moodTrend[m] = (moodTrend[m] || 0) + 1;
+    });
+    const staleBacklog = store.backlog.filter(b => {
+      const d = (new Date(today + 'T00:00:00') - new Date((b.originalDate || today) + 'T00:00:00')) / 864e5;
+      return d >= 3;
+    }).length;
+    const activeGoals = store.goals.filter(g => !g.archived).map(g => ({
+      title: g.title,
+      progress: g.tasks.length ? Math.round(g.tasks.filter(t => t.done).length / g.tasks.length * 100) : 0,
+      deadline: g.deadline
+    }));
+    return {
+      streak: streakLocal(),
+      avgDone: days ? Math.round(doneSum / days * 10) / 10 : 0,
+      recent7,
+      moodTrend,
+      todayTasks: store.today.tasks.map(t => ({ text: t.text, done: t.done, estMin: t.estMin, priority: t.priority })),
+      todayStatus: store.today.status || '未记录',
+      backlogCount: store.backlog.length,
+      staleBacklog,
+      activeGoals,
+      tomorrowDOW: Store.fmtDOW(Store.shiftDate(today, 1))
+    };
+  }
+
+  /* ================= 目标拆解（LLM 优先，规则兜底） ================= */
+  const DOMAINS = [
+    {
+      key: 'write', words: ['文章', '写作', '公众号', '笔记', '书稿', '专栏', '报告', '论文', '文案'],
+      hours: '约6-8小时',
+      milestones: ['筹备与选题', '内容打磨', '发布与收尾'],
+      tasks: [
+        ['搜索3篇参考文章并做笔记', '先摸清同行的表达方式，写的时候心里有底', 25],
+        ['列出文章大纲', '大纲定下来，文章就完成了30%', 20],
+        ['写引言和第一个论点', '趁状态好先啃最难的开头', 40],
+        ['写核心论证部分', '这是文章的主体，拆成两天写更稳', 45],
+        ['补充案例与数据', '具体例子能让观点立得住', 35],
+        ['打磨语言与结构', '好文章是改出来的，不是写出来的', 40],
+        ['自读一遍并修改', '用读者的眼睛读一遍，删掉废话', 30],
+        ['排版配图', '好看的外表，值得被打开', 25],
+        ['预览检查错别字', '发出去之前的最后一道体面', 15],
+        ['发布并记录反馈', '让这篇文章形成闭环', 20]
+      ]
+    },
+    {
+      key: 'read', words: ['读', '看书', '阅读', '本', '章'],
+      hours: '约5-7小时',
+      milestones: ['建立阅读节奏', '深入重点章节', '输出读书笔记'],
+      tasks: [
+        ['每天读1章并划重点', '细水长流比突击更适合你', 30],
+        ['记录每章触动自己的1句话', '把书变成自己的东西', 10],
+        ['读完第一个重点章节', '先拿下全书方法的核心', 40],
+        ['整理这一章的要点卡片', '输出一次，理解就深一层', 25],
+        ['读完第二个重点章节', '保持你自己的节奏就好', 40],
+        ['对比两章的关联', '观点之间的连接最有价值', 20],
+        ['写一篇300字读书笔记', '给这段时间的阅读一个交代', 30]
+      ]
+    },
+    {
+      key: 'learn', words: ['学', '课程', '英语', '技能', '考', '练', '会'],
+      hours: '约7-10小时',
+      milestones: ['打好基础', '专项练习', '检验成果'],
+      tasks: [
+        ['列出学习大纲和重点', '先看地图再出发', 15],
+        ['完成基础部分的学习', '地基打牢，后面才不慌', 40],
+        ['做一次专项小练习', '练一遍比看三遍有用', 30],
+        ['整理易错点清单', '错误是最好的老师', 20],
+        ['完成进阶部分的练习', '挑战一下，但不必完美', 45],
+        ['做一次阶段性自测', '看看自己走到了哪里', 35],
+        ['总结心得并定下一步', '阶段性收个尾，给自己一个交代', 20]
+      ]
+    },
+    {
+      key: 'habit', words: ['运动', '健身', '跑步', '早睡', '打卡', '习惯', '拉伸', '冥想'],
+      hours: '约3-5小时',
+      milestones: ['建立新习惯', '稳定节奏', '融入生活'],
+      tasks: [
+        ['定一个最小的起点', '5分钟也算开始', 5],
+        ['连续3天执行最小动作', '先让身体记住这件事', 15],
+        ['记录每次执行后的感受', '看见变化才更容易坚持', 5],
+        ['逐步增加到舒适的时长', '加量不急，稳定优先', 20],
+        ['连续一周保持节奏', '一周之后，它就是你生活的一部分', 15],
+        ['回顾并奖励自己', '该奖励的时候别犹豫', 10]
+      ]
+    },
+    {
+      key: 'default', words: [],
+      hours: '约5-7小时',
+      milestones: ['准备阶段', '执行阶段', '收尾阶段'],
+      tasks: [
+        ['理清目标和最终产出', '想清楚"完成"长什么样', 15],
+        ['收集必要资料和信息', '先把材料备齐', 30],
+        ['制定执行清单', '把大目标拆成能打勾的小步', 20],
+        ['完成第一部分的执行', '先完成，再完美', 45],
+        ['完成第二部分的执行', '保持这个节奏', 45],
+        ['检查遗漏并补全', '收尾前的自查', 30],
+        ['整理成果并记录', '让完成感落下来', 20]
+      ]
+    }
+  ];
+
+  /** 规则兜底：领域模板拆解 */
+  function _ruleGoalDecompose(input, deadlineStr) {
+    const d = DOMAINS.find(x => x.words.some(w => input.includes(w))) || DOMAINS[DOMAINS.length - 1];
+    const today = Store.todayStr();
+    const deadline = deadlineStr || Store.shiftDate(today, 10);
+    const workdays = Store.weekdaysBetween(today, deadline) || 5;
+    const dates = Store.listWeekdays(today, d.tasks.length);
+    const dailyMin = Math.max(20, Math.min(90, Math.round(60 * 7 / workdays)));
+    const tasks = d.tasks.map((t, i) => ({
+      text: t[0], why: t[1], estMin: t[2],
+      date: dates[i] || dates[dates.length - 1]
+    }));
+    return {
+      estimate: d.hours, workdays, daily: `约${dailyMin}分钟/天`,
+      milestones: d.milestones, tasks
+    };
+  }
+
+  /**
+   * 目标拆解（async）：LLM 按人格画像生成，失败回退规则模板
+   * @returns {Promise<{estimate:string, workdays:number, daily:string, milestones:string[], tasks:{text,why,estMin,date}[]}>}
+   */
+  async function goalDecompose(input, deadlineStr) {
+    if (!canCallLLM()) return _ruleGoalDecompose(input, deadlineStr);
+    const today = Store.todayStr();
+    const deadline = deadlineStr || Store.shiftDate(today, 10);
+    const workdays = Store.weekdaysBetween(today, deadline) || 5;
+    const dates = Store.listWeekdays(today, Math.min(Math.max(workdays, 3), 12));
+    const prompt = `用户的目标：「${input}」，计划截止：${deadline}，可用工作日：${dates.join('、')}。
+请把目标拆成 3 个里程碑，以及不超过 ${dates.length} 个每日任务（每天不超过1件，任务描述要具体可执行、符合 ISFJ 每天≤3件的舒适区）。
+每个任务包含：text（具体动作+对象+预期产出）、why（为什么做，≤20字）、estMin（预计分钟数 10~90）。
+严格输出 JSON：{"estimate":"总耗时估算（如 约6-8小时）","milestones":["里程碑1","里程碑2","里程碑3"],"tasks":[{"text":"…","why":"…","estMin":30}]}`;
+    const r = await LLM.chat([
+      { role: 'system', content: PERSONA + '你擅长把长期目标拆成温柔、具体、可打勾的每日任务。只输出 JSON，不要任何多余文字。' },
+      { role: 'user', content: prompt }
+    ], { json: true, maxTokens: 1200, temperature: 0.7 });
+    if (r && Array.isArray(r.tasks) && r.tasks.length) {
+      markOk();
+      const tasks = r.tasks.slice(0, dates.length).map((t, i) => ({
+        text: String(t.text || '').slice(0, 40),
+        why: String(t.why || '').slice(0, 40),
+        estMin: Math.max(5, Math.min(120, Number(t.estMin) || 30)),
+        date: dates[i] || dates[dates.length - 1]
+      }));
+      const avgMin = Math.round(tasks.reduce((s, t) => s + t.estMin, 0) / Math.max(tasks.length, 1));
+      return {
+        estimate: String(r.estimate || '约5-7小时'),
+        workdays, daily: `约${avgMin}分钟/天`,
+        milestones: Array.isArray(r.milestones) && r.milestones.length ? r.milestones.slice(0, 3) : ['准备阶段', '执行阶段', '收尾阶段'],
+        tasks
+      };
+    }
+    markFail();
+    return _ruleGoalDecompose(input, deadlineStr);
+  }
+
+  /* ================= OCR 模拟（可替换为百度 OCR 手写版） ================= */
+  const OCR_POOL = [
+    { orig: '搜索3篇参考文章并做笔记', typo: '搜索3篇参考文童并做笔记' },
+    { orig: '列出文章大纲', typo: '列出文童大纲' },
+    { orig: '写周报初稿', typo: '写周报初搞' },
+    { orig: '给妈妈打电话', typo: '给妈妈打电诂' },
+    { orig: '读《认知觉醒》第3章', typo: '读《认知觉酲》第3章' },
+    { orig: '回复邮件', typo: '回复邮件' },
+    { orig: '买本周计划本', typo: '买本周计刬本' },
+    { orig: '整理书桌', typo: '整理书桌' },
+    { orig: '散步30分钟', typo: '散步30分祌' }
+  ];
+
+  /**
+   * 模拟拍照 OCR。真实实现：调用百度 OCR 手写版 API 后返回同结构。
+   * @returns {{lines:{original:string,text:string,estMin:number,edited:boolean}[]}}
+   */
+  function ocrSimulate() {
+    const store = Store.load();
+    const n = 2 + Math.floor(Math.random() * 3); // 2-4 条
+    const picked = [...OCR_POOL].sort(() => Math.random() - 0.5).slice(0, n);
+    const lines = picked.map(p => {
+      const fixed = store.corrections[p.orig];
+      const useTypo = Math.random() < 0.55 && !fixed;
+      return {
+        original: p.orig,
+        text: fixed || (useTypo ? p.typo : p.orig),
+        estMin: 10 + Math.round(Math.random() * 3) * 5,
+        edited: !!fixed
+      };
+    });
+    return { lines };
+  }
+
+  /* ================= 话术生成 ================= */
+
+  /** 规则兜底：一句话包含 共情 + 事实 + 建议 + 选择权 */
+  function copy(trigger, ctx = {}) {
+    const T = ctx.total ?? 0, D = ctx.done ?? 0, P = ctx.priorityCount ?? 0;
+    switch (trigger) {
+      case 'morning':
+        return `今天有${T}件事等你去完成。${P ? `其中${P}件标记为优先。` : '都按你的节奏来。'}`;
+      case 'evening':
+        return `今天已完成${D}件，还剩${T - D}件。睡前可以拍个复盘。`;
+      case 'mood_low':
+        return '今天状态偏低。我已把1件事移到了待办。你不需要每天都很强。';
+      case 'all_done':
+        return '今日已完成。';
+      case 'streak3':
+        return '这周全勤。不是做得多，是节奏稳。';
+      case 'adjust_estimate':
+        return `你最近${ctx.task}平均用时${ctx.avg}分钟，已按此调整后续预估。`;
+      case 'only_one':
+        return '你今天选了最难的那件先做。另外几件没完成，是因为时间被其他事占用了，还是预估不准？明天我可以帮你把大任务拆小。';
+      case 'no_exercise':
+        return '你这几天没安排运动。不是催促——只是想确认，是累了，还是时间被占用了？明天下午有一个空档，5分钟拉伸也是进步，要看我帮你排进去吗？';
+      case 'over_done':
+        return `今天状态很好，${T}件全部完成。但连续高能量容易透支，明天我只帮你排2件——剩下的时间留给你自己缓冲。`;
+      case 'goal_decomposed':
+        return '目标已拆解完成。你可以调整任务分配到具体日期，或直接确认。';
+      case 'goal_done':
+        return `🎯 已达成：${ctx.title}。要归档吗？`;
+      case 'goal_archived':
+        return '已归档。你完成了一件重要的事，剩下的明天再说。';
+      case 'goal_created':
+        return `已为你创建目标。我会陪着你一步步走。`;
+      case 'backlog_7d':
+        return `"${ctx.task}"已在待办里放了7天。要重新安排，还是删除？`;
+      case 'backlog_3d':
+        return `"${ctx.task}"在待办里放了3天，还需要它吗？`;
+      case 'backlog_restored':
+        return `已把"${ctx.task}"移回今日任务。`;
+      case 'backlog_deleted':
+        return `这件事已经不重要了。已为你放下。`;
+      case 'ocr_done':
+        return '如果识别有误，点击任务文字即可修改。';
+      case 'ocr_committed':
+        return `已把 ${ctx.n ?? ''}件任务排进今天。拍得不错。`;
+      case 'day_end':
+        return '今日已完成。明天见。';
+      case 'task_moved_out':
+        return `状态偏低时不用硬撑。已把"${ctx.task}"移到待办，明天再排回来就好。`;
+      case 'review_saved':
+        return '记录好了。完成本身就是意义。';
+      default:
+        return '';
+    }
+  }
+
+  /** 场景映射：把触发器翻译给 LLM */
+  const SCENARIOS = {
+    morning: '用户早晨打开App，今日任务列表已生成',
+    evening: '用户晚上打开App，查看今日进度',
+    mood_low: '用户刚刚点选了😔（有点累）的状态',
+    all_done: '今日任务全部完成',
+    streak3: '用户已连续多天全勤',
+    adjust_estimate: '系统根据历史用时自动修正了某任务的预估时间',
+    only_one: '今天原计划多件，只完成了1件（先挑了最难的）',
+    no_exercise: '用户连续几天没有运动安排',
+    over_done: '超额完成，计划内任务全部完成',
+    goal_decomposed: '用户的长期目标刚刚被拆解完成',
+    goal_done: '某个目标已达成100%',
+    goal_archived: '用户确认归档一个已达成目标',
+    goal_created: '用户确认创建一个新目标',
+    backlog_7d: '待办里有一件事存放超过7天',
+    backlog_3d: '待办里有一件事连续3天没被排进日程',
+    backlog_restored: '一件待办被用户移回今日任务',
+    backlog_deleted: '用户删除了一件待办',
+    ocr_done: '拍照识别完成，等待用户确认识别结果',
+    ocr_committed: '用户确认了OCR识别的任务，加入今日/待办',
+    day_end: '用户点击结束今天，明天即将开始',
+    task_moved_out: '因状态偏低，系统把1件事移到了待办',
+    review_saved: '用户完成了一次即时复盘记录',
+    ai_connected: 'AI 服务连接测试成功',
+    ai_failed: 'AI 服务连接测试失败'
+  };
+
+  /**
+   * 个性化话术（async）：LLM 结合人格画像 + 用户行为数据生成
+   * 失败时回退规则版 copy()，保证始终有话可说。
+   */
+  async function copySmart(trigger, ctx = {}) {
+    if (!canCallLLM()) return copy(trigger, ctx);
+    const scene = SCENARIOS[trigger] || `场景：${trigger}`;
+    const payload = { scene, ctx, user: userContext() };
+    const msg = await LLM.chat([
+      { role: 'system', content: PERSONA },
+      { role: 'user', content: `当前场景：${scene}。上下文数据：${JSON.stringify(payload)}\n请输出一句 30~60 字的话（只输出这句话本身，不要引号、不要换行、不要列表）。一句话里同时包含：共情 + 基于上面数据的事实 + 一条可执行建议 + 选择权。` }
+    ], { maxTokens: 200, temperature: 0.95, timeout: 15000 });
+    if (msg) { markOk(); return clean(msg); }
+    markFail();
+    return copy(trigger, ctx);
+  }
+
+  /* ================= 复盘生成 ================= */
+
+  /** 周报统计（规则计算，供渲染 + 喂给 LLM） */
+  function weeklyReport() {
+    const store = Store.load();
+    const today = Store.todayStr();
+    const days = [];
+    let total = 0;
+    for (let i = 6; i >= 0; i--) {
+      const ymd = Store.shiftDate(today, -i);
+      const rec = store.dayLog[ymd] || { done: 0, planned: 0 };
+      days.push({ ymd, done: rec.done, planned: rec.planned, dow: Store.fmtDOW(ymd) });
+      total += rec.done;
+    }
+    const vals = days.map(d => d.done);
+    const maxI = vals.indexOf(Math.max(...vals));
+    const minI = vals.indexOf(Math.min(...vals));
+    const up = vals[6] >= vals[minI] ? '回升' : '走低';
+    const curve = `${days[maxI].dow}最高（${vals[maxI]}件）→ ${days[minI].dow}最低（${vals[minI]}件）→ 之后${up}`;
+    const sorted = [...days].sort((a, b) => b.done - a.done);
+    const advice = `建议下周把重要任务放在${sorted[0].dow}和${sorted[1].dow}。`;
+    const fullAttendance = vals.every(v => v >= 1);
+    return { total, curve, advice, fullAttendance, days };
+  }
+
+  /** 周报 AI 叙事（async）：LLM 基于本周真实数据写一段个性化复盘 */
+  async function weeklyNarration(r) {
+    if (!canCallLLM()) return null;
+    const store = Store.load();
+    const today = Store.todayStr();
+    const weekEntries = [];
+    for (let i = 6; i >= 0; i--) {
+      const ymd = Store.shiftDate(today, -i);
+      const items = store.completedLog.filter(e => e.date === ymd).map(e => e.text);
+      weekEntries.push({ dow: Store.fmtDOW(ymd), items });
+    }
+    const prompt = `请基于本周真实数据，写一段 2~4 句的周复盘（80~140字）。要求：先共情看见用户的付出；再指出真实节奏规律（高/低点、全勤或波动、情绪倾向）；最后给一条可执行且带选择权的下周建议。不要用列表、不要用标题、不要喊称呼。
+本周数据：
+- 总完成：${r.total} 件
+- 每天完成数：${r.days.map(d => `${d.dow}${d.done}`).join('、')}
+- 是否全勤：${r.fullAttendance ? '是' : '否'}
+- 最近7天实际完成的任务：${weekEntries.map(w => `${w.dow}(${w.items.join('、') || '无记录'})`).join('；')}
+- 用户整体上下文：${JSON.stringify(userContext())}`;
+    const msg = await LLM.chat([
+      { role: 'system', content: PERSONA },
+      { role: 'user', content: prompt }
+    ], { maxTokens: 400, temperature: 0.9 });
+    if (msg) { markOk(); return clean(msg); }
+    markFail();
+    return null;
+  }
+
+  /** 月报统计（规则计算） */
+  function monthlyReport() {
+    const store = Store.load();
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const entries = store.completedLog.filter(e => e.date.startsWith(monthKey));
+    const total = entries.length;
+    const count = {};
+    entries.forEach(e => { count[e.text] = (count[e.text] || 0) + 1; });
+    const repeated = Object.entries(count).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const byDay = {};
+    entries.forEach(e => { const dd = Number(e.date.slice(8)); byDay[dd] = (byDay[dd] || 0) + 1; });
+    const timeline = [];
+    for (let i = 1; i <= daysInMonth; i++) timeline.push({ day: i, n: byDay[i] || 0 });
+    return { total, repeated: repeated.map(([text, n]) => ({ text, n })), timeline, monthKey };
+  }
+
+  /** 月报 AI 叙事（async） */
+  async function monthlyNarration(m) {
+    if (!canCallLLM()) return null;
+    const store = Store.load();
+    const month = m.monthKey;
+    const entries = store.completedLog.filter(e => e.date.startsWith(month))
+      .map(e => `${e.date.slice(5)} ${e.mood || ''} ${e.text}`).slice(-30);
+    const prompt = `请基于本月真实数据，写一段 2~4 句的月度复盘（80~140字）。要求：先共情看见整月的付出；再指出节奏与情绪规律、重复出现的主题；最后给一条面向下个月的可执行建议（带选择权）。不要列表、不要标题、不要喊称呼。
+本月数据：
+- 总完成：${m.total} 件
+- 重复出现的灵感：${m.repeated.length ? m.repeated.map(r => `${r.text}×${r.n}`).join('、') : '无'}
+- 完成明细（节选）：${entries.join('；') || '本月暂无完成记录'}
+- 用户整体上下文：${JSON.stringify(userContext())}`;
+    const msg = await LLM.chat([
+      { role: 'system', content: PERSONA },
+      { role: 'user', content: prompt }
+    ], { maxTokens: 400, temperature: 0.9 });
+    if (msg) { markOk(); return clean(msg); }
+    markFail();
+    return null;
+  }
+
+  /* ================= 智能任务量适配（规则，供渲染 + 明日方案） ================= */
+  function suggestTomorrow() {
+    const store = Store.load();
+    const today = Store.todayStr();
+    let sum = 0, n = 0;
+    for (let i = 1; i <= 30; i++) {
+      const rec = store.dayLog[Store.shiftDate(today, -i)];
+      if (rec) { sum += rec.done; n++; }
+    }
+    const base = n ? Math.round(sum / n * 10) / 10 : 3;
+    let factor = 1;
+    if (store.today.status === '😔') factor = 0.6;
+    if (store.today.status === '😊') factor = 1.15;
+    const tomorrow = new Date(today + 'T00:00:00'); tomorrow.setDate(tomorrow.getDate() + 1);
+    const isWeekend = tomorrow.getDay() === 0 || tomorrow.getDay() === 6;
+    if (isWeekend) factor *= 1.4;
+    let count = Math.round(base * factor);
+    count = Math.max(0, Math.min(5, count));
+    if (isWeekend) count = Math.max(count, 2);
+    return { base, count, weekend: isWeekend };
+  }
+
+  /**
+   * 明日方案（async）：LLM 从待办+目标中挑选最合适的明日任务，
+   * 给出排序理由与一句明日寄语；失败回退 null（上层保留规则建议）。
+   * @returns {Promise<{plan:{text:string,why:string}[], note:string}|null>}
+   */
+  async function tomorrowPlan() {
+    if (!canCallLLM()) return null;
+    const store = Store.load();
+    const today = Store.todayStr();
+    const tomorrow = Store.shiftDate(today, 1);
+    const candidates = [
+      ...store.backlog.map(b => ({
+        text: b.text,
+        from: '待办',
+        age: Math.max(1, Math.round((new Date(today + 'T00:00:00') - new Date((b.originalDate || today) + 'T00:00:00')) / 864e5))
+      })),
+      ...store.goals.filter(g => !g.archived).flatMap(g =>
+        g.tasks.filter(t => !t.done && t.date <= tomorrow).map(t => ({ text: t.text, from: `目标「${g.title}」`, age: 0 }))
+      )
+    ].slice(0, 12);
+    const prompt = `用户明天是 ${Store.fmtDOW(tomorrow)}（${tomorrow}）。候选任务：${JSON.stringify(candidates)}。用户行为数据：${JSON.stringify(userContext())}。
+请从中挑选 2~4 件最适合明天做的任务（综合优先级、紧迫度、ISFJ 每日≤3件的舒适区、用户当前状态与历史节奏），排好顺序；每件附一句 ≤18字的"为什么选它"；最后给一句 ≤40字的明日寄语（温柔、有推动力、带选择权）。
+严格输出 JSON：{"plan":[{"text":"任务原文","why":"为什么选它"}],"note":"明日寄语"}`;
+    const r = await LLM.chat([
+      { role: 'system', content: PERSONA + '你擅长为 ISFJ 用户安排温柔不施压的每日方案。只输出 JSON。' },
+      { role: 'user', content: prompt }
+    ], { json: true, maxTokens: 800, temperature: 0.8 });
+    if (r && Array.isArray(r.plan)) {
+      markOk();
+      const picked = r.plan.filter(p => candidates.some(c => c.text === p.text)).slice(0, 4)
+        .map(p => ({ text: String(p.text).slice(0, 40), why: String(p.why || '').slice(0, 30) }));
+      if (picked.length) return { plan: picked, note: clean(String(r.note || '')) };
+    }
+    markFail();
+    return null;
+  }
+
+  return {
+    goalDecompose, ocrSimulate, copy, copySmart,
+    weeklyReport, weeklyNarration, monthlyReport, monthlyNarration,
+    suggestTomorrow, tomorrowPlan, userContext
+  };
+})();

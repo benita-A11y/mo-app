@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-palette="lavender" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FBF8FC">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="墨">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="description" content="墨 · 手写者的 AI 知己：融合 ISFJ 与天秤座人格的每日复盘与目标陪伴，支持离线使用。">
+<title>墨 · 手写者的 AI 知己</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <header id="app-header"></header>
+  <main id="view"></main>
+  <nav id="tabbar">
+    <button class="tab-btn" data-action="tab:switch" data-tab="today">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.4M12 19v2.4M2.6 12H5M19 12h2.4M5.3 5.3l1.7 1.7M17 17l1.7 1.7M18.7 5.3 17 7M7 17l-1.7 1.7"/></svg>
+      <span>今日</span>
+    </button>
+    <button class="tab-btn" data-action="tab:switch" data-tab="goals">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.6" fill="currentColor"/></svg>
+      <span>目标</span>
+    </button>
+    <button class="tab-btn" data-action="tab:switch" data-tab="backlog">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2.4"/></svg>
+      <span>待办</span>
+    </button>
+    <button class="tab-btn" data-action="tab:switch" data-tab="review">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20V10M9 20V4M14.5 20v-8M20 20V7"/></svg>
+      <span>复盘</span>
+    </button>
+  </nav>
+</div>
+
+<div id="bubble-host"></div>
+<button id="history-fab" data-action="history:open" title="历史消息" aria-label="历史消息">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-2.9-.4-4.1-1L3 20l1-5.4A8.5 8.5 0 1 1 21 11.5Z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/></svg>
+</button>
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+<input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+
+<script src="js/store.js" defer></script>
+<script src="js/llm.js" defer></script>
+<script src="js/ai.js" defer></script>
+<script src="js/app.js" defer></script>
+</body>
+</html>

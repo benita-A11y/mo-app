@@ -121,6 +121,32 @@ html[data-theme="dark"] .text-btn{background:rgba(255,255,255,.06)}
 .mood.on{opacity:1;background:rgba(255,255,255,.75);border-color:var(--line);box-shadow:var(--shadow-card);transform:scale(1.08)}
 html[data-theme="dark"] .mood.on{background:rgba(255,255,255,.12)}
 .mood-label{font-size:11px;color:var(--ink-2);margin-right:6px}
+/* 单个表情签到按钮：点击弹出三选一 */
+.mood-single{
+  width:38px;height:38px;border-radius:50%;font-size:19px;
+  display:grid;place-items:center;cursor:pointer;
+  background:rgba(255,255,255,.65);border:.5px solid var(--line);
+  box-shadow:var(--shadow-card);transition:transform .15s var(--ease);
+}
+.mood-single:active{transform:scale(.88)}
+html[data-theme="dark"] .mood-single{background:rgba(255,255,255,.12)}
+/* 状态选择弹层（底部 Sheet） */
+.mood-sheet{text-align:center}
+.mood-sheet .sheet-title{font-size:17px;font-weight:600;color:var(--ink);margin-bottom:2px}
+.mood-sheet .sheet-sub{font-size:12px;color:var(--ink-2);margin-bottom:16px}
+.mood-opts{display:flex;flex-direction:column;gap:8px}
+.mood-opt{
+  display:flex;align-items:center;gap:12px;width:100%;
+  padding:13px 16px;border-radius:14px;background:rgba(255,255,255,.55);
+  border:.5px solid var(--line);font-size:15px;color:var(--ink);
+  transition:all .15s var(--ease);
+}
+html[data-theme="dark"] .mood-opt{background:rgba(255,255,255,.06)}
+.mood-opt:active{transform:scale(.98);background:rgba(255,255,255,.85)}
+.mood-opt .mo-emoji{font-size:22px}
+.mood-opt .mo-label{font-size:14px;color:var(--ink)}
+.mood-opt .mo-check{margin-left:auto;color:var(--accent);font-weight:700}
+.mood-opt.on{background:rgba(212,184,217,.16);border-color:rgba(212,184,217,.4)}
 
 /* ============ 视图切换 ============ */
 #view{animation:fadeIn .35s var(--ease)}
@@ -225,15 +251,6 @@ html[data-theme="dark"] .frag-item{background:rgba(255,255,255,.06)}
 .frag-txt small{color:var(--ink-2);margin-left:6px;font-size:11px}
 .frag-acts{flex:none;display:flex;gap:6px}
 .frag-acts .mini-btn{padding:5px 11px;font-size:12px}
-/* 右下角碎片气泡（每日一次） */
-.frag-bubble{
-  position:fixed;right:14px;bottom:calc(78px + env(safe-area-inset-bottom));
-  z-index:60;display:flex;flex-direction:column;align-items:flex-end;gap:8px;
-  animation:riseIn .4s var(--ease);max-width:min(300px,calc(100vw - 40px));
-}
-.frag-bubble .ai-bubble{background:rgba(255,255,255,.8)}
-html[data-theme="dark"] .frag-bubble .ai-bubble{background:rgba(38,34,46,.85)}
-.frag-bubble-close{align-self:flex-end}
 
 /* ============ 今日页 ============ */
 .today-stack{display:flex;flex-direction:column;gap:12px}
@@ -311,7 +328,6 @@ html[data-theme="dark"] .today-bottom .quick-ic{background:rgba(255,255,255,.06)
   margin:6px 4px 2px;
 }
 .date-group-label::after{content:'';flex:1;height:1px;background:var(--line)}
-.hint-line{font-size:12px;color:var(--ink-2);text-align:center;margin-top:10px}
 
 /* ============ 目标页 ============ */
 .new-goal-card{
@@ -735,6 +751,8 @@ html[data-theme="dark"] .slot-pick{background:rgba(255,255,255,.05)}
 .task-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:4px 0 14px}
 .task-bar .stats{font-size:13px;color:var(--ink-2);letter-spacing:.2px}
 .task-bar .stats strong{color:var(--ink);font-weight:700}
+/* 时间线顶部统计：紧凑、贴住时间线 */
+.task-bar-tl{margin:0 0 6px 2px}
 .task-bar .mini-btn{
   background:rgba(212,184,217,.1);border:.5px solid rgba(212,184,217,.18);
   color:var(--accent);border-radius:30px;padding:6px 16px;font-size:13px;font-weight:600;
@@ -801,6 +819,7 @@ html[data-theme="dark"] .today-stack .task.has-sug{background:rgba(255,255,255,.
 .today-stack .task-meta .time{font-size:12px;color:var(--ink-2)}
 .today-stack .task-meta .hint{
   font-size:11px;color:#8E8E93;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  flex-basis:100%;margin-top:3px;
 }
 html[data-theme="dark"] .today-stack .task-meta .hint{color:#A6A0AE}
 .today-stack .task.done .task-meta{opacity:.75}
@@ -824,8 +843,10 @@ html[data-theme="dark"] .today-stack .task-meta .hint{color:#A6A0AE}
 .backlog-page{gap:10px}
 .backlog-group{padding:6px;border-radius:12px}
 .backlog-group .task{margin:2px 0;border-radius:10px}
-.inbox-card{padding:14px}
-.inbox-card .inbox-input{padding:10px 12px;font-size:14px;margin-bottom:6px}
+.inbox-card{padding:14px;border-radius:12px}
+.inbox-card .card-title .t{font-size:15px}
+.inbox-card .inbox-input{padding:10px 12px;font-size:13px;margin-bottom:6px}
+.inbox-card .inbox-input::placeholder{color:var(--ink-3,#B7B1BF)}
 .end-line{text-align:center;font-size:12px;color:var(--ink-2);opacity:.5;padding:4px 0 2px}
 /* 悬浮添加按钮（待办页） */
 .fab{
@@ -841,12 +862,12 @@ html[data-theme="dark"] .today-stack .task-meta .hint{color:#A6A0AE}
 .inbox-input{margin-bottom:8px}
 .inbox-list{display:flex;flex-direction:column;gap:6px}
 .inbox-item{
-  background:rgba(255,255,255,.5);border:.5px solid var(--line);
-  border-radius:var(--radius-md);padding:10px 12px;
+  background:rgba(255,255,255,.45);border:.5px solid var(--line);
+  border-radius:12px;padding:10px 12px;
 }
 html[data-theme="dark"] .inbox-item{background:rgba(255,255,255,.05)}
-.inbox-text{display:block;font-size:14px;font-weight:500;line-height:1.45}
-.inbox-sug{font-size:12px;color:var(--ink-2);margin-top:3px}
+.inbox-text{display:block;font-size:13px;font-weight:500;line-height:1.45}
+.inbox-sug{font-size:11px;color:var(--ink-2);margin-top:3px;opacity:.85}
 .inbox-acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .inbox-empty{font-size:13px;color:var(--ink-2);text-align:center;padding:14px 0 6px}
 

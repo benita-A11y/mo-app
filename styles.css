@@ -172,22 +172,26 @@ html[data-theme="dark"] .task:active{background:rgba(255,255,255,.06)}
 .task.doing .flag{color:var(--aux);border-color:rgba(212,184,217,.45);background:rgba(212,184,217,.1)}
 /* 复选框反馈：点击有触感 */
 .check:active{transform:scale(.88)}
-/* 左滑操作按钮（移动端）：默认隐藏，左滑露出 */
+/* 左滑操作按钮（移动端）：默认完全隐藏，左滑露出 3 个完整按钮 */
 .swipe-acts{
-  position:absolute;top:6px;right:6px;bottom:6px;
-  display:flex;align-items:stretch;gap:6px;
-  transform:translateX(calc(100% + 14px));
-  transition:transform .28s var(--ease);
+  position:absolute;top:0;right:0;bottom:0;
+  display:flex;align-items:stretch;
+  transform:translateX(calc(100% + 12px));
+  transition:transform .32s cubic-bezier(.34,1.4,.64,1);
 }
-.task.swiped{padding-right:10px}
 .task.swiped .swipe-acts{transform:translateX(0)}
 .swipe-acts button{
-  border:0;border-radius:10px;padding:0 12px;
-  font-size:12px;font-weight:600;color:var(--ink-2);
-  background:rgba(0,0,0,.05);cursor:pointer;white-space:nowrap;
+  border:0;width:60px;padding:0;margin:0;
+  font-size:12px;font-weight:600;color:#4A3F5C;cursor:pointer;white-space:nowrap;
+  -webkit-tap-highlight-color:transparent;
 }
-html[data-theme="dark"] .swipe-acts button{background:rgba(255,255,255,.08)}
-.swipe-acts button.danger{color:#E2725B;background:rgba(226,114,91,.1)}
+.swipe-acts button:first-child{border-radius:12px 0 0 12px;background:#E8D5E8}
+.swipe-acts button:nth-child(2){background:#F0EDF5}
+.swipe-acts button:last-child{border-radius:0 18px 18px 0;background:#F5E0E0;color:#C47A7A}
+.swipe-acts button:active{filter:brightness(.94)}
+html[data-theme="dark"] .swipe-acts button:first-child{background:rgba(232,213,232,.2);color:#E8D5E8}
+html[data-theme="dark"] .swipe-acts button:nth-child(2){background:rgba(240,237,245,.12);color:#F0EDF5}
+html[data-theme="dark"] .swipe-acts button:last-child{background:rgba(245,224,224,.18);color:#F0B9B9}
 
 /* ============ 碎片时间 ============ */
 .frag-card{
@@ -379,25 +383,30 @@ html[data-theme="dark"] .month-timeline .cell{background:rgba(255,255,255,.05)}
 
 /* ============ AI 气泡 ============ */
 .ai-bubble{
-  background:rgba(255,255,255,.7);
-  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-  border:.5px solid rgba(0,0,0,.06);
-  border-radius:16px 16px 16px 4px;
-  box-shadow:0 4px 20px rgba(0,0,0,.04);
-  padding:12px 14px;max-width:280px;
+  background:rgba(255,255,255,.65);
+  backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);
+  border:.5px solid rgba(212,184,217,.15);
+  border-radius:16px;
+  box-shadow:0 2px 16px rgba(74,63,92,.04);
+  padding:14px 16px;max-width:min(320px,90%);
   font-size:15px;line-height:1.6;color:#1C1C1E;
   position:relative;animation:bubbleIn .3s var(--ease);
 }
 html[data-theme="dark"] .ai-bubble{
-  background:rgba(44,40,49,.85);color:#F2EFF5;border-color:rgba(255,255,255,.08);
+  background:rgba(44,40,49,.8);color:#F2EFF5;border-color:rgba(255,255,255,.1);
 }
+/* 左下角尾巴：12×8 三角，圆角 1px */
 .ai-bubble::before{
-  content:'';position:absolute;left:-4px;bottom:10px;width:9px;height:9px;
-  background:inherit;border-left:.5px solid inherit;border-bottom:.5px solid inherit;
-  transform:rotate(45deg);
+  content:'';position:absolute;left:-6px;bottom:12px;width:12px;height:12px;
+  background:inherit;border-left:.5px solid rgba(212,184,217,.15);border-bottom:.5px solid rgba(212,184,217,.15);
+  transform:rotate(45deg);border-radius:1px;z-index:-1;
 }
+html[data-theme="dark"] .ai-bubble::before{border-color:rgba(255,255,255,.1)}
+.ai-bubble .text{text-align:left;color:inherit}
+.ai-bubble .highlight{color:#B8A0C8;font-weight:600}
+html[data-theme="dark"] .ai-bubble .highlight{color:#CBA8DB}
 .ai-bubble .who{
-  display:flex;align-items:center;gap:5px;margin-top:8px;
+  display:flex;align-items:center;justify-content:flex-end;gap:5px;margin-top:4px;
   font-size:12px;color:#8E8E93;
 }
 html[data-theme="dark"] .ai-bubble .who{color:#A6A0AE}
@@ -523,18 +532,21 @@ html[data-theme="dark"] .ds-k{background:rgba(255,255,255,.08)}
 .action-toast{
   pointer-events:auto;
   display:flex;align-items:center;gap:10px;
-  background:rgba(36,32,44,.88);
-  color:#fff;border-radius:16px;padding:10px 12px 10px 16px;
-  font-size:14px;box-shadow:0 8px 28px rgba(0,0,0,.22);
+  background:rgba(255,255,255,.78);
+  color:var(--ink);border-radius:16px;padding:10px 12px 10px 16px;
+  font-size:14px;box-shadow:0 10px 34px rgba(74,63,92,.14);
+  border:.5px solid rgba(212,184,217,.22);
   animation:riseIn .3s var(--ease);max-width:min(420px,100%);
-  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);
 }
+html[data-theme="dark"] .action-toast{background:rgba(38,34,46,.82);color:#F2EFF5;border-color:rgba(255,255,255,.1)}
 .action-toast.out{opacity:0;transform:translateY(8px);transition:all .3s var(--ease)}
 .action-toast .at-msg{line-height:1.4}
 .action-toast .at-undo{
   flex:none;border:0;border-radius:12px;padding:7px 14px;
-  background:rgba(255,255,255,.16);color:#fff;font-size:13px;font-weight:600;cursor:pointer;
+  background:rgba(212,184,217,.18);color:#B8A0C8;font-size:13px;font-weight:600;cursor:pointer;
 }
+html[data-theme="dark"] .action-toast .at-undo{background:rgba(255,255,255,.14);color:#E8D5E8}
 .action-toast .at-undo:active{transform:scale(.94)}
 
 /* ============ 长按操作菜单 ============ */
@@ -674,7 +686,7 @@ html[data-theme="dark"] .slot-pick{background:rgba(255,255,255,.05)}
 /* ============ 今日页 · 设计稿 v2 ============ */
 
 /* 任务统计 + 今日微调 */
-.task-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:2px 0 14px}
+.task-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:4px 0 14px}
 .task-bar .stats{font-size:13px;color:var(--ink-2);letter-spacing:.2px}
 .task-bar .stats strong{color:var(--ink);font-weight:700}
 .task-bar .mini-btn{
@@ -716,11 +728,11 @@ html[data-theme="dark"] .confirm-all .btn{background:rgba(255,255,255,.1)}
 .timeline-block .time-label .sub{font-weight:400;color:var(--ink-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .timeline-block .task-list{gap:10px}
 
-/* 今日任务卡片：毛玻璃圆角 */
+/* 今日任务卡片：毛玻璃圆角（overflow 裁剪保证左滑不露边缘） */
 .today-stack .task{
   background:rgba(255,255,255,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
   border-radius:18px;border:.5px solid var(--line);box-shadow:0 2px 12px rgba(74,63,92,.04);
-  padding:13px 14px;
+  padding:13px 14px;overflow:hidden;
 }
 html[data-theme="dark"] .today-stack .task{background:rgba(255,255,255,.06)}
 .today-stack .task:active{background:rgba(255,255,255,.85)}
@@ -729,7 +741,7 @@ html[data-theme="dark"] .today-stack .task:active{background:rgba(255,255,255,.1
 html[data-theme="dark"] .today-stack .task.done{background:rgba(255,255,255,.04)}
 .today-stack .task.has-sug{background:rgba(255,255,255,.55);border:.5px dashed rgba(184,160,200,.4)}
 html[data-theme="dark"] .today-stack .task.has-sug{background:rgba(255,255,255,.05)}
-.today-stack .task .swipe-acts{top:8px;right:8px;bottom:8px}
+.today-stack .task .swipe-acts{top:0;right:0;bottom:0}
 
 /* 今日任务元信息：标签组 */
 .today-stack .task-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px}
@@ -738,12 +750,13 @@ html[data-theme="dark"] .today-stack .task.has-sug{background:rgba(255,255,255,.
   background:rgba(212,184,217,.12);color:var(--accent);border:.5px solid rgba(212,184,217,.16);
 }
 .today-stack .task-meta .tag.green{background:rgba(168,196,184,.14);color:#7FA98F;border-color:rgba(168,196,184,.12)}
-.today-stack .task-meta .tag.priority{background:rgba(226,114,91,.1);color:#E2725B;border-color:rgba(226,114,91,.14);font-weight:600}
+.today-stack .task-meta .tag.priority{background:rgba(212,184,217,.14);color:#B8A0C8;border-color:rgba(212,184,217,.2);font-weight:600}
+.today-stack .task-meta .tag.frag{background:rgba(232,221,192,.2);color:#C4B89A;border-color:rgba(232,221,192,.24)}
 .today-stack .task-meta .time{font-size:12px;color:var(--ink-2)}
 .today-stack .task-meta .hint{
-  font-size:11px;color:var(--ink-2);background:var(--aux);
-  padding:1px 10px;border-radius:30px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:11px;color:#8E8E93;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
+html[data-theme="dark"] .today-stack .task-meta .hint{color:#A6A0AE}
 .today-stack .task.done .task-meta{opacity:.75}
 
 /* 已完成区块 */

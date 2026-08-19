@@ -268,21 +268,22 @@ function renderToday() {
   // 时间线任务卡片：点击看详情，复选框标记完成，左滑/长按呼出操作
   const taskRow = (t) => {
     const sug = !t.done && !t.matched && t.slot && slotByKey[t.slot];
-    const frag = AI.isFragTask(t.text, t.estMin) ? '<span class="bolt" title="适合碎片时间">⚡</span>' : '';
-    // 设计稿 v2：标签组（优先 / 顺路 / 用时 / 原因）
-    const tags = `
-      ${t.priority ? '<span class="tag priority">🔴 优先</span>' : ''}
-      ${sug ? '<span class="tag green">🛣 顺路</span>' : ''}
-      <span class="time">${t.estMin}分钟</span>
-      ${t.why ? `<span class="hint">${esc(t.why)}</span>` : ''}`;
+    const frag = AI.isFragTask(t.text, t.estMin);
+    // 信息只出现一次：优先/顺路/碎片标签 + 预计用时（顺路/碎片标签自带用时）
+    let tags = '';
+    if (t.priority) tags += '<span class="tag priority">⭐ 优先</span>';
+    if (sug) tags += `<span class="tag green">🚶 顺路 · ${t.estMin}分钟</span>`;
+    else if (frag) tags += `<span class="tag frag">✨ 碎片 · ${t.estMin}分钟</span>`;
+    else tags += `<span class="time">${t.estMin}分钟</span>`;
+    // 第二行右侧：顺路显示动线描述，否则显示原因（都不重复出现）
+    const note = sug ? (t.routeNote || slotByKey[t.slot].hint || '') : (t.why || '');
     return `
       <li class="task ${t.done ? 'done' : ''}${t.doing ? ' doing' : ''}${sug ? ' has-sug' : ''}" data-action="task:detail" data-id="${t.id}" ${t.done ? '' : 'draggable="true" title="点击查看详情 · 拖拽可调整顺序"'}">
         <span class="check" data-action="task:check" data-id="${t.id}">${t.done ? '🌱' : ''}</span>
         <div class="task-body">
-          <span class="task-text">${esc(t.text)}${frag}</span>
-          <span class="task-meta">${tags}</span>
+          <span class="task-text">${esc(t.text)}</span>
+          <span class="task-meta">${tags}${note ? `<span class="hint">${esc(note)}</span>` : ''}</span>
           ${sug ? `
-            <div class="route-sug"><span class="sug-tag">🛣 顺路</span><span class="sug-txt">${esc(t.routeNote || slotByKey[t.slot].hint || '')}</span></div>
             <div class="route-acts">
               <button class="mini-btn ok" data-action="task:accept-route" data-id="${t.id}">✓ 就这么办</button>
               <button class="mini-btn" data-action="task:adjust-slot" data-id="${t.id}">🕐 调整</button>
@@ -290,9 +291,9 @@ function renderToday() {
         </div>
         <span class="flag">${t.done ? '已完成' : (t.doing ? '⏳ 进行中' : '')}</span>
         <div class="swipe-acts">
-          <button data-action="task:edit" data-id="${t.id}">✏️</button>
+          <button data-action="task:edit" data-id="${t.id}">编辑</button>
           <button data-action="task:to-backlog" data-id="${t.id}">待办</button>
-          <button class="danger" data-action="task:del" data-id="${t.id}">🗑</button>
+          <button class="danger" data-action="task:del" data-id="${t.id}">删除</button>
         </div>
       </li>`;
   };
@@ -471,9 +472,9 @@ async function refreshHero() {
   else if (h >= 18) trigger = 'evening';
   const smart = await AI.copySmart(trigger, { total: undone, done, priorityCount: prio });
   if (smart && b.isConnected) {
-    const who = b.querySelector('.who');
-    b.innerHTML = esc(smart);
-    if (who) b.appendChild(who);
+    const txt = b.querySelector('.text');
+    if (txt) txt.innerHTML = hlText(smart);
+    else b.innerHTML = hlText(smart);
   }
 }
 
@@ -488,9 +489,9 @@ async function refreshReviewAI() {
   // 更新气泡
   const b = $('#' + bubbleId);
   if (b && b.isConnected) {
-    const who = b.querySelector('.who');
-    b.innerHTML = esc(narration);
-    if (who) b.appendChild(who);
+    const txt = b.querySelector('.text');
+    if (txt) txt.innerHTML = hlText(narration);
+    else b.innerHTML = hlText(narration);
   }
   // 填充 AI 复盘卡片
   const card = $('#ai-insight');
@@ -873,13 +874,18 @@ function renderReview() {
 }
 
 /* ================= AI 气泡组件 ================= */
+/* 数字/关键词强调色：把「3件事」「15分钟」等数字单位包成高亮 */
+function hlText(text) {
+  return esc(text).replace(/(\d+(?:\.\d+)?)(件|个|分钟|小时|天|步|公里|km|次)/g, '<span class="highlight">$1$2</span>');
+}
+
 function bubble(text, align = 'left', id = '') {
   return `
     <div class="ai-hero ${align}">
       ${align === 'left' ? `<div class="ai-avatar" aria-label="墨"></div>` : ''}
       <div class="ai-bubble" ${id ? `id="${id}"` : ''}>
-        ${esc(text)}
-        <div class="who"><span class="dot" aria-hidden="true"></span>我</div>
+        <div class="text">${hlText(text)}</div>
+        <div class="who"><span class="dot" aria-hidden="true"></span>—— 我</div>
       </div>
     </div>`;
 }
@@ -894,9 +900,9 @@ function toast(text, opts = {}) {
   const t = el(`
     <div class="toast ${opts.ai ? 'ai' : ''}" style="pointer-events:auto">
       <div class="ai-bubble" style="max-width:${opts.wide ? '340px' : '300px'};background:${opts.ai ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.7)'};backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
-        <div class="toast-text">${esc(text)}</div>
+        <div class="toast-text">${hlText(text)}</div>
         ${buttons}
-        <div class="who"><span class="dot" aria-hidden="true"></span>我</div>
+        <div class="who"><span class="dot" aria-hidden="true"></span>—— 我</div>
       </div>
     </div>`);
   root.appendChild(t);
@@ -1043,6 +1049,7 @@ function openTaskMenu(id, source) {
 
 /* 编辑任务弹窗 */
 function openTaskEdit(id, source) {
+  actionToast('已进入编辑模式');
   const store = Store.load();
   const arr = source === 'today' ? store.today.tasks : store.backlog;
   const t = arr.find(x => x.id === id);
@@ -1180,7 +1187,7 @@ function maybeFragBubble() {
   Store.save();
   const b = el(`
     <div class="frag-bubble">
-      <div class="ai-bubble">今天有 ${n} 段碎片时间，可以完成一些小事。<div class="who"><span class="dot" aria-hidden="true"></span>我</div></div>
+      <div class="ai-bubble"><div class="text">今天有 ${n} 段碎片时间，可以完成一些小事。</div><div class="who"><span class="dot" aria-hidden="true"></span>—— 我</div></div>
       <button class="mini-btn ghost frag-bubble-close" data-action="frag:close">知道了</button>
     </div>`);
   $('#bubble-host').appendChild(b);
@@ -1447,14 +1454,26 @@ function debounce(fn, ms) {
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
+const SWIPE_W = 180; // 左滑露出 3 个按钮的总宽度（60×3）
 let touchTarget = null;
 let touchStartX = 0;
+let touchStartY = 0;
+let swipeMoved = false;
 function onTouchStart(e) {
-  touchTarget = e.target.closest('.task');
+  const el = e.target.closest('.task');
   touchStartX = e.touches ? e.touches[0].clientX : 0;
-  if (!touchTarget) return;
-  if (touchTarget.classList.contains('swiped')) return; // 已滑开，先处理按钮
-  const act = touchTarget.dataset.action;
+  touchStartY = e.touches ? e.touches[0].clientY : 0;
+  swipeMoved = false;
+  // 点击已滑开卡片的非按钮区域：先收回，不触发详情
+  if (el && el.classList.contains('swiped')) {
+    if (e.target.closest('.swipe-acts')) { touchTarget = el; return; }
+    el.classList.remove('swiped');
+    touchTarget = null;
+    return;
+  }
+  touchTarget = el;
+  if (!el) return;
+  const act = el.dataset.action;
   if (act !== 'task:detail' && act !== 'backlog:detail' && act !== 'task:instant') return;
   App.longPressTimer = setTimeout(() => {
     const id = touchTarget.dataset.id;
@@ -1465,13 +1484,33 @@ function onTouchStart(e) {
 }
 function onTouchMove(e) {
   clearTimeout(App.longPressTimer);
-  if (touchTarget) {
-    const dx = e.touches[0].clientX - touchStartX;
-    if (dx < -50) touchTarget.classList.add('swiped');
-    else if (dx > 50) touchTarget.classList.remove('swiped');
-  }
+  if (!touchTarget) return;
+  const dx = e.touches[0].clientX - touchStartX;
+  const dy = e.touches[0].clientY - touchStartY;
+  // 纵向位移占主导时交给页面滚动
+  if (!swipeMoved && Math.abs(dy) > Math.abs(dx)) return;
+  if (Math.abs(dx) < 8) return;
+  swipeMoved = true;
+  const el = touchTarget;
+  const open = el.classList.contains('swiped');
+  const x = open ? Math.max(-SWIPE_W, Math.min(0, -SWIPE_W + dx)) : Math.max(-SWIPE_W, Math.min(0, dx));
+  el.style.transform = `translateX(${x}px)`;
+  el.style.transition = 'none';
 }
-function onTouchEnd() { clearTimeout(App.longPressTimer); touchTarget = null; }
+function onTouchEnd() {
+  clearTimeout(App.longPressTimer);
+  if (touchTarget) {
+    const el = touchTarget;
+    const m = el.style.transform.match(/-?\d+(\.\d+)?/);
+    const x = m ? parseFloat(m[0]) : 0;
+    el.style.transform = '';
+    el.style.transition = '';
+    if (x < -SWIPE_W / 2) el.classList.add('swiped');
+    else el.classList.remove('swiped');
+  }
+  touchTarget = null;
+  swipeMoved = false;
+}
 
 function onClick(e) {
   // 点击任务外区域 → 收起所有左滑按钮

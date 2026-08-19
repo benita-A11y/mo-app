@@ -1,11 +1,11 @@
 /* 墨 · Service Worker —— 让应用在飞行模式 / 无网络下完整可用 */
-const CACHE_NAME = 'mo-pwa-v7';
+const CACHE_NAME = 'mo-pwa-v8';
 
 /* 需要离线缓存的静态资源（相对站点根目录） */
 const PRECACHE = [
   './',
   './index.html',
-  './styles.css?v=7',
+  './styles.css?v=8',
   './manifest.json',
   './js/llm.js',
   './js/store.js',

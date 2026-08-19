@@ -65,7 +65,8 @@ body::before{
   background-size:22px 22px;
   color:var(--line);
 }
-html{-webkit-tap-highlight-color:transparent}
+html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+html,body{touch-action:manipulation}
 button{font-family:var(--font);background:none;border:none;cursor:pointer;color:inherit;-webkit-tap-highlight-color:transparent}
 button:active{filter:brightness(.96)}
 input,select,textarea{font-family:var(--font);color:var(--ink)}
@@ -137,21 +138,23 @@ html[data-theme="dark"] .mood.on{background:rgba(255,255,255,.12)}
 html[data-theme="dark"] .card{border-color:rgba(255,255,255,.07)}
 
 .card-title{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
-.card-title .t{font-size:17px;font-weight:600;letter-spacing:-.2px}
-.card-title .meta{font-size:13px;color:var(--ink-2)}
+.card-title .t{font-size:16px;font-weight:600;letter-spacing:-.2px}
+.card-title .meta{font-size:12px;color:var(--ink-2)}
 .card-sub{font-size:13px;color:var(--ink-2);margin-bottom:14px}
 
 /* ============ 任务行 ============ */
 .task-list{list-style:none;display:flex;flex-direction:column;gap:2px}
 .task{
   display:flex;align-items:center;gap:12px;
-  padding:12px 10px;border-radius:var(--radius-md);
-  cursor:pointer;position:relative;
+  padding:11px 10px;border-radius:var(--radius-md);
+  cursor:pointer;position:relative;overflow:hidden;
+  background:rgba(255,255,255,.45);
   transition:background .2s, transform .2s var(--ease), opacity .3s;
   user-select:none;
 }
-.task:active{background:rgba(255,255,255,.55)}
-html[data-theme="dark"] .task:active{background:rgba(255,255,255,.06)}
+.task:active{background:rgba(255,255,255,.85)}
+html[data-theme="dark"] .task{background:rgba(255,255,255,.05)}
+html[data-theme="dark"] .task:active{background:rgba(255,255,255,.1)}
 .task.done{opacity:.62}
 .check{
   flex:none;width:22px;height:22px;border-radius:50%;
@@ -166,7 +169,7 @@ html[data-theme="dark"] .task:active{background:rgba(255,255,255,.06)}
   animation:pop .3s var(--ease);
 }
 .task-body{flex:1;min-width:0}
-.task-text{display:block;font-size:15px;font-weight:500;letter-spacing:.1px;line-height:1.35}
+.task-text{display:block;font-size:14px;font-weight:500;letter-spacing:.1px;line-height:1.35}
 .task.done .task-text{color:var(--ink-2)}
 .task-meta{display:block;font-size:12px;color:var(--ink-2);margin-top:2px}
 .task-meta .prio-tag{
@@ -198,7 +201,7 @@ html[data-theme="dark"] .task:active{background:rgba(255,255,255,.06)}
 }
 .swipe-acts button:first-child{border-radius:12px 0 0 12px;background:#E8D5E8}
 .swipe-acts button:nth-child(2){background:#F0EDF5}
-.swipe-acts button:last-child{border-radius:0 18px 18px 0;background:#F5E0E0;color:#C47A7A}
+.swipe-acts button:last-child{border-radius:0 12px 12px 0;background:#F5E0E0;color:#C47A7A}
 .swipe-acts button:active{filter:brightness(.94)}
 html[data-theme="dark"] .swipe-acts button:first-child{background:rgba(232,213,232,.2);color:#E8D5E8}
 html[data-theme="dark"] .swipe-acts button:nth-child(2){background:rgba(240,237,245,.12);color:#F0EDF5}
@@ -817,6 +820,24 @@ html[data-theme="dark"] .today-stack .task-meta .hint{color:#A6A0AE}
 }
 
 /* ============ 灵感箱 ============ */
+/* 待办/灵感箱页小程序化：紧凑卡片、浅色层次 */
+.backlog-page{gap:10px}
+.backlog-group{padding:6px;border-radius:12px}
+.backlog-group .task{margin:2px 0;border-radius:10px}
+.inbox-card{padding:14px}
+.inbox-card .inbox-input{padding:10px 12px;font-size:14px;margin-bottom:6px}
+.end-line{text-align:center;font-size:12px;color:var(--ink-2);opacity:.5;padding:4px 0 2px}
+/* 悬浮添加按钮（待办页） */
+.fab{
+  position:fixed;right:18px;bottom:calc(84px + env(safe-area-inset-bottom));
+  z-index:60;width:52px;height:52px;border-radius:50%;
+  background:linear-gradient(135deg,var(--primary),var(--accent));
+  color:#fff;font-size:24px;font-weight:600;line-height:1;
+  display:grid;place-items:center;
+  box-shadow:0 8px 22px rgba(184,160,200,.45);
+  transition:transform .2s var(--ease);
+}
+.fab:active{transform:scale(.9)}
 .inbox-input{margin-bottom:8px}
 .inbox-list{display:flex;flex-direction:column;gap:6px}
 .inbox-item{

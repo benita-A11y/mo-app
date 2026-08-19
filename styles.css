@@ -574,16 +574,33 @@ html[data-theme="dark"] .menu-item:active{background:rgba(255,255,255,.06)}
 .decomp-task select{flex:none;font-size:11px;background:transparent;border:.5px solid var(--line);border-radius:8px;padding:2px 4px;color:var(--ink-2)}
 .decomp-task .d-why{display:block;font-size:11px;color:var(--ink-2);margin-top:2px}
 
-/* OCR 确认 */
+/* OCR 确认：毛玻璃卡片，展示原始识别结果 */
 .ocr-line{
-  display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;
-  background:var(--card);border:.5px solid var(--line);margin-bottom:8px;
+  display:flex;align-items:center;gap:10px;margin-bottom:8px;
+  background:rgba(255,255,255,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border-radius:18px;border:.5px solid var(--line);box-shadow:0 2px 12px rgba(74,63,92,.04);
+  padding:12px 14px;overflow:hidden;
 }
-.ocr-line .txt{flex:1;font-size:14px;line-height:1.5}
-.ocr-line .txt input{width:100%;font-size:14px;background:transparent;border:none;outline:none;border-bottom:1.5px solid var(--accent);padding:2px 0}
-.ocr-line .edit-btn{flex:none;font-size:13px;color:var(--accent);padding:4px}
-.ocr-line .tm{flex:none;width:56px;font-size:12px;text-align:center;color:var(--ink-2)}
-.ocr-line .tm input{width:100%;font-size:12px;background:transparent;border:none;outline:none;border-bottom:1px solid var(--line);text-align:center}
+html[data-theme="dark"] .ocr-line{background:rgba(255,255,255,.06)}
+.ocr-line .txt{
+  flex:1;font-size:15px;line-height:1.6;cursor:text;
+  border-radius:8px;padding:2px 4px;margin:-2px -4px;transition:background .2s;
+}
+.ocr-line .txt:active{background:rgba(0,0,0,.05)}
+html[data-theme="dark"] .ocr-line .txt:active{background:rgba(255,255,255,.08)}
+.ocr-line .txt .low-conf{
+  text-decoration:underline;
+  text-decoration-style:dashed;
+  text-decoration-thickness:1px;
+  text-underline-offset:3px;
+  text-decoration-color:#BAB5AF; /* 浅灰下划线：置信度低于 80%，提醒检查 */
+}
+html[data-theme="dark"] .ocr-line .txt .low-conf{text-decoration-color:#8A8490}
+.ocr-line .ocr-input{
+  width:100%;font-size:15px;background:transparent;border:none;outline:none;
+  border-bottom:1.5px solid var(--accent);padding:2px 0;
+}
+.ocr-line .edit-btn{flex:none;font-size:13px;color:var(--ink-2);padding:4px}
 .loading-card{text-align:center;padding:30px 20px}
 .loading-card .spin{
   width:34px;height:34px;border-radius:50%;margin:0 auto 14px;

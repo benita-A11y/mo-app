@@ -228,8 +228,8 @@ const AI = (() => {
 
   /**
    * 模拟拍照 OCR。真实实现：调用百度 OCR 手写版 API 后返回同结构。
-   * 铁律：只返回识别到的原始文本，绝不补全、修正、联想或分类。
-   * @returns {{lines:{original:string,text:string,estMin:null,edited:boolean}[]}}
+   * 铁律：只返回识别到的原始文字与逐词置信度，绝不补全、修正、联想或分类。
+   * @returns {{lines:{original:string,text:string,words:{t:string,c:number}[],estMin:null,edited:boolean}[]}}
    */
   function ocrSimulate() {
     const n = 2 + Math.floor(Math.random() * 3); // 2-4 条
@@ -237,10 +237,21 @@ const AI = (() => {
     const lines = picked.map(p => ({
       original: p,
       text: p,
+      words: mockOcrWords(p),
       estMin: null,
       edited: false
     }));
     return { lines };
+  }
+
+  /* 模拟逐词置信度：把一行切成小段，随机给 0-2 个词低于 80% 的置信度（用于演示下划线提醒） */
+  function mockOcrWords(text) {
+    const chunks = String(text).match(/.{1,3}/gu) || [String(text)];
+    let lowLeft = Math.random() < 0.72 ? 1 + (Math.random() < 0.4 ? 1 : 0) : 0;
+    return chunks.map(t => {
+      if (lowLeft > 0) { lowLeft--; return { t, c: 62 + Math.floor(Math.random() * 17) }; } // 62-78
+      return { t, c: 88 + Math.floor(Math.random() * 12) }; // 88-99
+    });
   }
 
   /* ================= 动线系统：时间骨架 → 时间槽 → 顺路推荐 ================= */
@@ -526,7 +537,7 @@ c) drop：不值得记录
       case 'ocr_done':
         return '如果识别有误，点击任务文字即可修改。';
       case 'ocr_committed':
-        return `已把 ${ctx.n ?? ''}件任务排进今天。拍得不错。`;
+        return `已把 ${ctx.n ?? ''}件任务放进待办。拍得不错。`;
       case 'day_end':
         return '今日已完成。明天见。';
       case 'task_moved_out':
@@ -608,7 +619,7 @@ c) drop：不值得记录
     backlog_restored: '一件待办被用户移回今日任务',
     backlog_deleted: '用户删除了一件待办',
     ocr_done: '拍照识别完成，等待用户确认识别结果',
-    ocr_committed: '用户确认了OCR识别的任务，加入今日/待办',
+    ocr_committed: '用户确认了OCR识别的任务，放入待办',
     day_end: '用户点击结束今天，明天即将开始',
     task_moved_out: '因状态偏低，系统把1件事移到了待办',
     review_saved: '用户完成了一次即时复盘记录',

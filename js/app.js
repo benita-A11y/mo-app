@@ -242,7 +242,7 @@ function renderToday() {
   ensureRouteSuggestions(store);
   const undone = store.today.tasks.filter(t => !t.done);
   const doneTasks = store.today.tasks.filter(t => t.done);
-  const totalMin = undone.reduce((s, t) => s + t.estMin, 0);
+  const totalMin = undone.reduce((s, t) => s + (t.estMin || 0), 0);
   const budget = 180;
   const freeMin = Math.max(0, budget - totalMin);
   const prioCount = undone.filter(t => t.priority).length;
@@ -269,12 +269,13 @@ function renderToday() {
   const taskRow = (t) => {
     const sug = !t.done && !t.matched && t.slot && slotByKey[t.slot];
     const frag = AI.isFragTask(t.text, t.estMin);
+    const minTxt = t.estMin ? `${t.estMin}分钟` : '';
     // 信息只出现一次：优先/顺路/碎片标签 + 预计用时（顺路/碎片标签自带用时）
     let tags = '';
     if (t.priority) tags += '<span class="tag priority">⭐ 优先</span>';
-    if (sug) tags += `<span class="tag green">🚶 顺路 · ${t.estMin}分钟</span>`;
-    else if (frag) tags += `<span class="tag frag">✨ 碎片 · ${t.estMin}分钟</span>`;
-    else tags += `<span class="time">${t.estMin}分钟</span>`;
+    if (sug) tags += `<span class="tag green">🚶 顺路${minTxt ? ` · ${minTxt}` : ''}</span>`;
+    else if (frag) tags += `<span class="tag frag">✨ 碎片${minTxt ? ` · ${minTxt}` : ''}</span>`;
+    else if (minTxt) tags += `<span class="time">${minTxt}</span>`;
     // 第二行右侧：顺路显示动线描述，否则显示原因（都不重复出现）
     const note = sug ? (t.routeNote || slotByKey[t.slot].hint || '') : (t.why || '');
     return `
@@ -585,7 +586,7 @@ function renderBacklog() {
             <span class="check"></span>
             <div class="task-body">
               <span class="task-text">${esc(b.text)}${frag}${b.priority ? ' <span class="prio-tag">优先</span>' : ''}</span>
-              <span class="task-meta">${b.estMin}分钟</span>
+              <span class="task-meta">${b.estMin ? `${b.estMin}分钟` : '未估时'}</span>
             </div>
             <span class="flag"></span>
             <div class="swipe-acts">
@@ -1002,7 +1003,7 @@ function openTaskDetail(id, source) {
   const sug = isToday && t.slot ? AI.buildSlots(Store.todayStr()).find(s => s.key === t.slot) : null;
   const frag = AI.isFragTask(t.text, t.estMin);
   const rows = `
-    <div class="ds-row"><span class="ds-k">预计</span><span class="ds-v">${t.estMin} 分钟</span></div>
+    <div class="ds-row"><span class="ds-k">预计</span><span class="ds-v">${t.estMin ? `${t.estMin} 分钟` : '未填写'}</span></div>
     ${t.priority ? '<div class="ds-row"><span class="ds-k">标记</span><span class="ds-v">🔴 优先任务</span></div>' : ''}
     ${frag ? '<div class="ds-row"><span class="ds-k">碎片</span><span class="ds-v">⚡ 适合在空隙里顺手完成</span></div>' : ''}
     ${sug ? `<div class="ds-row"><span class="ds-k">顺路</span><span class="ds-v">${esc(sug.label)}${t.routeNote ? ` · ${esc(t.routeNote)}` : ''}</span></div>` : ''}
@@ -1033,7 +1034,7 @@ function openTaskMenu(id, source) {
   const t = arr.find(x => x.id === id);
   if (!t) return;
   const isToday = source === 'today';
-  const info = `${t.estMin}分钟${t.priority ? ' · 🔴 优先' : ''}${AI.isFragTask(t.text, t.estMin) ? ' · ⚡ 碎片' : ''}`;
+  const info = `${t.estMin ? `${t.estMin}分钟` : '未估时'}${t.priority ? ' · 🔴 优先' : ''}${AI.isFragTask(t.text, t.estMin) ? ' · ⚡ 碎片' : ''}`;
   openModal(modalShell(
     esc(t.text), info,
     `<div class="menu-list">
@@ -1331,33 +1332,42 @@ function renderOcrConfirm() {
   if (!draft) return;
   const lines = draft.lines.map((l, i) => `
     <div class="ocr-line" data-idx="${i}">
-      <span class="txt"><span class="t-view">${esc(l.text)}</span></span>
-      <button class="edit-btn" data-action="ocr:edit" data-idx="${i}" title="编辑">✏️</button>
+      <span class="txt" data-action="ocr:edit" data-idx="${i}" title="点击编辑">${ocrWordsHtml(l)}</span>
       <button class="edit-btn" data-action="ocr:copy" data-idx="${i}" title="复制">📋</button>
     </div>`).join('');
 
   openModal(modalShell(
-    '识别结果', '只做文字提取：不自动修正、不联想、不分类。识别有误可点击 ✏️ 修改，全部内容归你掌控。',
+    '识别结果',
+    '拍照识别的原始文字，未做修正、联想或分类。带浅灰下划线的词置信度偏低，点击任意文字即可修改。',
     lines,
     `<div class="modal-actions">
       <button class="btn-ghost" data-action="ocr:copy-all">复制全部</button>
       <button class="btn-ghost" data-action="ocr:discard">取消</button>
-      <button class="btn-primary" data-action="ocr:today">加入今日</button>
-      <button class="btn-primary" style="background:var(--card);border:.5px solid var(--line);color:var(--ink)" data-action="ocr:backlog">加入待办</button>
+      <button class="btn-primary" data-action="ocr:backlog">加入待办</button>
     </div>`
   ));
 }
 
+/* 逐词渲染：置信度 < 80% 的词加浅灰下划线；用户已编辑过的行按纯文本显示 */
+function ocrWordsHtml(l) {
+  if (l.edited || !Array.isArray(l.words) || !l.words.length) return esc(l.text);
+  return l.words.map(w => w.c < 80
+    ? `<span class="low-conf" title="识别置信度 ${w.c}%，请检查">${esc(w.t)}</span>`
+    : esc(w.t)).join('');
+}
+
 function startOcrEdit(idx) {
-  const l = App.ocrDraft.lines[idx];
-  const view = $(`.ocr-line[data-idx="${idx}"] .t-view`);
-  const inp = el(`<input value="${esc(l.text)}" autofocus>`);
-  view.replaceWith(inp);
+  const l = App.ocrDraft && App.ocrDraft.lines[idx];
+  if (!l) return;
+  const txtEl = $(`.ocr-line[data-idx="${idx}"] .txt`);
+  if (!txtEl) return;
+  const inp = el(`<input class="ocr-input" value="${esc(l.text)}" autofocus>`);
+  txtEl.replaceWith(inp);
   inp.focus();
   inp.setSelectionRange(inp.value.length, inp.value.length);
   const commit = () => {
     const val = inp.value.trim();
-    if (val) l.text = val;   // 只改用户自己改的内容，绝不自动补全/修正
+    if (val) { l.text = val; l.edited = true; } // 只保留用户自己的修改，绝不补全/修正
     renderOcrConfirm();
   };
   inp.addEventListener('blur', commit);
@@ -1563,8 +1573,7 @@ function onClick(e) {
     case 'ocr:edit': startOcrEdit(Number(btn.dataset.idx)); break;
     case 'ocr:copy': ocrCopy(Number(btn.dataset.idx)); break;
     case 'ocr:copy-all': ocrCopyAll(); break;
-    case 'ocr:today': commitOcr('today'); break;
-    case 'ocr:backlog': commitOcr('backlog'); break;
+    case 'ocr:backlog': commitOcr(); break;
     case 'ocr:discard': closeModal(); App.ocrDraft = null; break;
     case 'history:open': openHistory(); break;
     case 'settings:palette': setPalette(btn.dataset.val); break;
@@ -1935,27 +1944,23 @@ function keepGoal(id) {
   render();
 }
 
-/* OCR 提交 */
-function commitOcr(target) {
+/* OCR 提交：原文进入待办列表，不做任何自动分类或标注 */
+function commitOcr() {
   const draft = App.ocrDraft;
   App.ocrDraft = null;
   if (!draft) return;
   const store = Store.load();
   const today = Store.todayStr();
+  let n = 0;
   draft.lines.forEach(l => {
-    if (target === 'today') {
-      store.today.tasks.push({ id: Store.uid(), text: l.text, estMin: 15, priority: false, done: false, goalId: null, why: '', slot: '', matched: false, routeNote: '' });
-    } else {
-      store.backlog.unshift({ id: Store.uid(), text: l.text, estMin: 15, priority: false, originalDate: today, why: '' });
-    }
+    const text = (l.text || '').trim();
+    if (!text) return;
+    store.backlog.unshift({ id: Store.uid(), text, estMin: null, priority: false, originalDate: today, why: '' });
+    n++;
   });
   Store.save();
   closeModal();
-  aiToast('ocr_committed', { n: draft.lines.length }, {
-    fallback: target === 'today'
-      ? `已把 ${draft.lines.length} 件任务加入今日。`
-      : `已把 ${draft.lines.length} 件任务放入待办。`
-  });
+  aiToast('ocr_committed', { n }, { fallback: `已把 ${n} 件任务放入待办，未做任何分类或标注。` });
   render();
 }
 

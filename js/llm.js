@@ -1,1 +1,110 @@
-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
+/* ============================================================
+   「墨」· LLM 客户端层
+   支持 DeepSeek / 豆包（火山方舟）/ 自定义 OpenAI 兼容端点
+   ------------------------------------------------------------
+   配置存于 store.settings.ai = {
+     enabled, provider, apiKey, baseUrl, model
+   }
+   所有调用失败时返回 null，由上层回退到规则引擎。
+   ============================================================ */
+'use strict';
+
+const LLM = (() => {
+
+  const PROVIDERS = {
+    deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', tip: '在 DeepSeek 开放平台创建 API Key' },
+    doubao: { name: '豆包（火山方舟）', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: '', tip: '模型填推理接入点 ID（ep-…）或模型名，如 doubao-seed-1-6-250615' },
+    custom: { name: '自定义（OpenAI 兼容）', baseUrl: '', model: '', tip: '填入任意 OpenAI 兼容服务的 Base URL 与模型名' }
+  };
+
+  function cfg() {
+    const store = Store.load();
+    return store.settings.ai || {};
+  }
+
+  /** AI 是否已启用且配置了 Key */
+  function isEnabled() {
+    const c = cfg();
+    return !!(c && c.enabled && c.apiKey && c.apiKey.trim());
+  }
+
+  function providerName(p) { return (PROVIDERS[p] || {}).name || p; }
+
+  /**
+   * 调用对话补全接口
+   * @param {{role:string,content:string}[]} messages
+   * @param {{temperature?:number, maxTokens?:number, json?:boolean, timeout?:number}} opts
+   * @returns {Promise<string|null>} 失败返回 null
+   */
+  async function chat(messages, opts = {}) {
+    if (!isEnabled()) return null;
+    const c = cfg();
+    const prov = PROVIDERS[c.provider] || PROVIDERS.custom;
+    const baseUrl = (c.baseUrl || prov.baseUrl || '').replace(/\/+$/, '');
+    if (!baseUrl) return null;
+    const model = c.model || prov.model;
+    if (!model) return null;
+
+    const body = {
+      model,
+      messages,
+      temperature: opts.temperature ?? 0.8,
+      max_tokens: opts.maxTokens ?? 900,
+      stream: false
+    };
+    if (opts.json) {
+      body.response_format = { type: 'json_object' };
+    }
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), opts.timeout ?? 20000);
+    try {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${c.apiKey.trim()}`
+        },
+        body: JSON.stringify(body),
+        signal: ctrl.signal
+      });
+      if (!res.ok) {
+        console.warn('[LLM] HTTP', res.status, await res.text().catch(() => ''));
+        return null;
+      }
+      const data = await res.json();
+      const text = data.choices?.[0]?.message?.content || '';
+      if (opts.json) return extractJson(text);
+      return text || null;
+    } catch (e) {
+      console.warn('[LLM] 调用失败：', e.message || e);
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** 从模型输出中提取 JSON 对象（兼容 ```json 包裹 与 前后杂文本） */
+  function extractJson(text) {
+    if (!text) return null;
+    try { return JSON.parse(text); } catch (_) {}
+    const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (m) { try { return JSON.parse(m[1]); } catch (_) {} }
+    const s = text.indexOf('{'), e = text.lastIndexOf('}');
+    if (s >= 0 && e > s) {
+      try { return JSON.parse(text.slice(s, e + 1)); } catch (_) {}
+    }
+    return null;
+  }
+
+  /** 测试连接 */
+  async function test() {
+    const ok = await chat([
+      { role: 'system', content: '你是连接测试助手。' },
+      { role: 'user', content: '请只回复两个字：连接成功' }
+    ], { maxTokens: 20, temperature: 0, timeout: 12000 });
+    return ok !== null;
+  }
+
+  return { chat, test, isEnabled, cfg, PROVIDERS, providerName };
+})();

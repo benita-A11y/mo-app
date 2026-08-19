@@ -264,14 +264,19 @@ html[data-theme="dark"] .stat{background:rgba(255,255,255,.05)}
 .today-bottom .backlog-entry .n{
   background:var(--accent);color:#fff;font-size:11px;border-radius:10px;padding:1px 7px;font-weight:600;
 }
-.cam-btn{
-  display:flex;align-items:center;gap:6px;color:#fff;font-size:14px;font-weight:600;
-  background:linear-gradient(135deg,var(--primary),var(--accent));
-  border-radius:var(--radius-md);padding:11px 18px;box-shadow:0 4px 16px rgba(0,0,0,.08);
+/* 底部快捷图标（拍照 / 消息）：统一样式 + 微标签 */
+.today-bottom .quick-ic{
+  flex:none;width:54px;height:54px;border-radius:18px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  background:rgba(255,255,255,.6);border:.5px solid var(--line);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  box-shadow:var(--shadow-card);color:var(--ink);
   transition:transform .2s var(--ease);
 }
-.cam-btn:active{transform:scale(.96)}
-.cam-btn .ic{font-size:16px}
+html[data-theme="dark"] .today-bottom .quick-ic{background:rgba(255,255,255,.06)}
+.today-bottom .quick-ic:active{transform:scale(.94)}
+.today-bottom .quick-ic .qi-ic{font-size:20px;line-height:1}
+.today-bottom .quick-ic .qi-lb{font-size:10px;color:var(--ink-2);font-weight:500;line-height:1}
 
 /* 待办页 & 目标页 & 复盘页 通用 */
 .page-stack{display:flex;flex-direction:column;gap:16px}
@@ -419,16 +424,7 @@ html[data-theme="dark"] .ai-bubble .who{color:#A6A0AE}
 .toast.out{opacity:0;transform:translateY(-8px)}
 .toast.ai{max-width:320px;text-align:left}
 
-/* 历史 FAB */
-#history-fab{
-  position:fixed;right:18px;bottom:calc(86px + env(safe-area-inset-bottom));z-index:40;
-  width:48px;height:48px;border-radius:50%;
-  background:var(--card);border:.5px solid var(--line);
-  box-shadow:var(--shadow-float);display:grid;place-items:center;color:var(--accent);
-  transition:transform .2s var(--ease);
-}
-#history-fab:active{transform:scale(.92)}
-#history-fab svg{width:21px;height:21px}
+
 
 /* ============ 底部导航 ============ */
 #tabbar{
@@ -781,17 +777,8 @@ html[data-theme="dark"] .today-stack .task-meta .hint{color:#A6A0AE}
 .completed-section .label{font-size:12px;color:var(--ink-2);letter-spacing:.5px;margin-bottom:10px;font-weight:600}
 .completed-section .task-list{gap:10px}
 
-/* 底部操作栏（历史按钮带小红点） */
+/* 底部操作栏 */
 .today-bottom{margin-top:6px}
-.today-bottom .history-btn{
-  width:46px;height:46px;flex:none;font-size:18px;position:relative;
-  background:rgba(255,255,255,.6);border:.5px solid var(--line);color:var(--ink);
-}
-html[data-theme="dark"] .today-bottom .history-btn{background:rgba(255,255,255,.08)}
-.today-bottom .history-btn::after{
-  content:'';position:absolute;top:8px;right:10px;width:8px;height:8px;border-radius:50%;
-  background:var(--primary);border:1.5px solid rgba(255,255,255,.75);
-}
 
 /* 结束语 */
 .end-note{
@@ -887,7 +874,7 @@ html[data-theme="dark"] .inbox-item{background:rgba(255,255,255,.05)}
   .task-text{font-size:14px}
   .today-bottom{gap:8px}
   .today-bottom .backlog-entry{padding:10px 12px;font-size:13px}
-  .cam-btn{padding:10px 14px;font-size:13px}
+  .today-bottom .quick-ic{width:50px;height:50px;border-radius:16px}
   .big-stat .v{font-size:32px}
   .tab-btn{padding:4px 8px}
   .month-timeline .cell{width:30px;height:30px;font-size:11px}
@@ -906,8 +893,9 @@ html[data-theme="dark"] .inbox-item{background:rgba(255,255,255,.05)}
   .greet-title{font-size:23px}
   .stats-grid{gap:8px}
   .stat{padding:10px 12px}
-  .cam-btn{width:46px;justify-content:center;padding:10px 0}
-  .cam-btn .txt{display:none}
+  .today-bottom .quick-ic{width:48px;height:48px;border-radius:16px}
+  .today-bottom .quick-ic .qi-ic{font-size:18px}
+  .today-bottom .quick-ic .qi-lb{font-size:9px}
   .today-bottom .backlog-entry{font-size:12px;padding:9px 10px}
 }
 @media(prefers-reduced-motion:reduce){

@@ -417,9 +417,11 @@ function renderToday() {
           <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
             📋 待办 <span class="n">${store.backlog.length}</span> 件
           </button>
-          <button class="icon-btn history-btn" data-action="history:open" title="历史消息" aria-label="历史消息">💬</button>
-          <button class="cam-btn" data-action="camera:open">
-            <span class="ic">📷</span> <span class="txt">拍照</span>
+          <button class="quick-ic" data-action="camera:open" title="拍照识别" aria-label="拍照识别">
+            <span class="qi-ic">📷</span><span class="qi-lb">拍照</span>
+          </button>
+          <button class="quick-ic" data-action="history:open" title="历史消息" aria-label="历史消息">
+            <span class="qi-ic">💬</span><span class="qi-lb">消息</span>
           </button>
         </div>
 

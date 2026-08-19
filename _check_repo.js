@@ -1,0 +1,20 @@
+const TOKEN = process.env.GH_TOKEN;
+(async () => {
+  const api = 'https://api.github.com/repos/benita-A11y/reliang-shouzhang/contents/js/pages4.js';
+  const r = await fetch(api, { headers: { Authorization: 'Bearer ' + TOKEN, 'User-Agent': 'codebuddy-deploy' } });
+  const j = await r.json();
+  const b = Buffer.from(j.content, 'base64').toString('utf8');
+  console.log('status', r.status, '| size', b.length);
+  console.log('has nutri:bill:', b.includes('nutri:bill'));
+  console.log('has 蛋白缺口:', b.includes('蛋白缺口'));
+  console.log('has renderRecoCard:', b.includes('renderRecoCard'));
+  console.log('has buildNutriPool:', b.includes('buildNutriPool'));
+  const s = await fetch('https://api.github.com/repos/benita-A11y/reliang-shouzhang/contents/sw.js', { headers: { Authorization: 'Bearer ' + TOKEN, 'User-Agent': 'codebuddy-deploy' } });
+  const sj = await s.json();
+  console.log('sw v7:', Buffer.from(sj.content, 'base64').toString('utf8').includes('reliang-v7'));
+  const a = await fetch('https://api.github.com/repos/benita-A11y/reliang-shouzhang/contents/js/ai.js', { headers: { Authorization: 'Bearer ' + TOKEN, 'User-Agent': 'codebuddy-deploy' } });
+  const aj = await a.json();
+  const ab = Buffer.from(aj.content, 'base64').toString('utf8');
+  console.log('ai normFix:', ab.includes('replace(/的/g'));
+  console.log('ai isSweetDrink:', ab.includes('isSweetDrink'));
+})();

@@ -1569,7 +1569,7 @@ function onClick(e) {
     case 'history:open': openHistory(); break;
     case 'settings:palette': setPalette(btn.dataset.val); break;
     case 'settings:theme': setTheme(btn.dataset.val); break;
-    case 'settings:reset': resetAll(); break;
+    case 'settings:clear-demo': confirmClearDemo(); break;
     case 'settings:ai-test': testAi(); break;
     case 'skeleton:edit': openSkeletonDay(btn.dataset.day); break;
     case 'skeleton:add': addSkeletonRow(); break;
@@ -2027,7 +2027,7 @@ function openSettings() {
     </div>
     <div class="modal-actions">
       <button class="btn-ghost" data-action="settings:ai-test">测试连接</button>
-      <button class="btn-ghost" data-action="settings:reset">重置演示数据</button>
+      <button class="btn-ghost" data-action="settings:clear-demo">清空演示数据</button>
       <button class="btn-primary" data-action="modal:close">完成</button>
     </div>`));
 
@@ -2297,12 +2297,39 @@ function setTheme(t) {
   openSettings();
 }
 
-function resetAll() {
-  const store = Store.reset();
-  applyTheme(store.settings);
-  App.tab = 'today';
-  render();
-  closeModal();
+/* 清空时间骨架演示数据：一层确认框，清完留在设置页，不动其他配置 */
+function confirmClearDemo() {
+  const ov = openSheet(`
+    <div class="sheet confirm-sheet">
+      <div class="sheet-title">确定清空所有演示数据吗？</div>
+      <div class="sheet-sub">会把课表和时间段示例全部清掉，方便你录入自己的真实安排。AI 配置等设置不受影响。</div>
+      <div class="sheet-acts">
+        <button class="btn-ghost sheet-cancel">取消</button>
+        <button class="btn-primary sheet-ok">确定</button>
+      </div>
+    </div>`);
+  ov.querySelector('.sheet-cancel').addEventListener('click', () => ov.remove());
+  ov.querySelector('.sheet-ok').addEventListener('click', () => { ov.remove(); clearDemoSkeleton(); });
+}
+
+function clearDemoSkeleton() {
+  const store = Store.load();
+  const sk = store.settings.skeleton || {};
+  const backup = {
+    week: JSON.parse(JSON.stringify(sk.week || {})),
+    overrides: JSON.parse(JSON.stringify(sk.overrides || {})),
+    enabled: !!sk.enabled
+  };
+  // 只清时间骨架，其余配置（含 API Key）原样保留
+  store.settings.skeleton = { enabled: false, week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }, overrides: {} };
+  Store.save();
+  openSettings(); // 留在设置页，刷新骨架区域为空状态
+  actionToast('已清空演示数据，可以录入自己的时间安排了', () => {
+    const s = Store.load();
+    s.settings.skeleton = { enabled: backup.enabled, week: backup.week, overrides: backup.overrides };
+    Store.save();
+    openSettings();
+  });
 }
 
 /* ================= 启动 ================= */

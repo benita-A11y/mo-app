@@ -580,7 +580,7 @@ function renderBacklog() {
   }).join('') : '<div class="inbox-empty">这里先“接住”你冒出来的想法，等你有空再整理。</div>';
 
   const inboxCard = `
-    <section class="card">
+    <section class="card inbox-card">
       <div class="card-title">
         <span class="t">✏️ 灵感箱</span>
         <span class="meta">先记下来，稍后由墨帮你归类</span>
@@ -607,7 +607,7 @@ function renderBacklog() {
 
   const groupHtml = dates.map(d => `
     <div class="date-group-label">📅 来自${Store.fmtMD(d)}</div>
-    <div class="card" style="padding:10px">
+    <div class="card backlog-group">
       <ul class="task-list">
         ${groups[d].map(b => {
           const frag = AI.isFragTask(b.text, b.estMin) ? '<span class="bolt" title="适合碎片时间">⚡</span>' : '';
@@ -620,9 +620,9 @@ function renderBacklog() {
             </div>
             <span class="flag"></span>
             <div class="swipe-acts">
-              <button data-action="backlog:to-today" data-id="${b.id}">今日</button>
-              <button data-action="backlog:edit" data-id="${b.id}">✏️</button>
-              <button class="danger" data-action="backlog:del" data-id="${b.id}">🗑</button>
+              <button data-action="backlog:to-today" data-id="${b.id}">移动</button>
+              <button data-action="backlog:edit" data-id="${b.id}">编辑</button>
+              <button class="danger" data-action="backlog:del" data-id="${b.id}">删除</button>
             </div>
           </li>`;
         }).join('')}
@@ -630,16 +630,24 @@ function renderBacklog() {
     </div>`).join('') || '<div class="card" style="text-align:center;color:var(--ink-2)">待办是空的，今天的计划都可以在纸上完成。</div>';
 
   return `
-    <div class="page-stack">
+    <div class="page-stack backlog-page">
       ${inboxCard}
-      <div style="font-size:13px;color:var(--ink-2);margin-top:6px">共 ${store.backlog.length} 件待办</div>
+      <div style="font-size:12px;color:var(--ink-2);margin-top:4px">共 ${store.backlog.length} 件待办</div>
       ${remind}
       ${groupHtml}
       <div class="hint-line">点击任务 → 查看详情 · 左滑或长按 → 编辑/移动/删除 · ⚡ 适合碎片时间</div>
+      <div class="end-line">—— 没有更多了 ——</div>
+      <button class="fab" data-action="inbox:focus" title="添加想法" aria-label="添加想法">＋</button>
     </div>`;
 }
 
 /* 灵感箱动作 */
+function focusInbox() {
+  const inp = $('#inbox-input');
+  if (!inp) return;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  inp.focus({ preventScroll: true });
+}
 function inboxAdd(text) {
   const store = Store.load();
   store.inbox.unshift({ id: Store.uid(), text: text.trim(), at: new Date().toISOString() });
@@ -1630,6 +1638,7 @@ function onClick(e) {
     case 'inbox:to-backlog': inboxToBacklog(id); break;
     case 'inbox:del': inboxDel(id); break;
     case 'inbox:copy': inboxCopy(id); break;
+    case 'inbox:focus': focusInbox(); break;
     case 'edit:save': saveTaskEdit(id, btn.dataset.src); break;
     case 'frag:start': fragStart(id, btn.dataset.from); break;
     case 'frag:ignore': fragIgnore(id); break;

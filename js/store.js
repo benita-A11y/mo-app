@@ -65,21 +65,30 @@ const Store = (() => {
     completedLog.push({ id: uid(), text: '读《认知觉醒》第3章', date: d12, doneAt: '', estMin: 30, actualMin: 30, mood: '😐', note: '' });
 
     return {
-      version: 1,
+      version: 2,
       settings: {
         palette: 'lavender', theme: 'system',
-        ai: { enabled: false, provider: 'deepseek', apiKey: '', baseUrl: '', model: '' }
+        ai: { enabled: false, provider: 'deepseek', apiKey: '', baseUrl: '', model: '' },
+        schedule: {
+          enabled: false,
+          week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }
+          // 每项: { id, start:'08:00', end:'09:40', name:'高数', place:'A301' }
+        }
       },
       todayDate: today,
       today: {
         status: null,
         tasks: [
-          { id: uid(), text: '写周报初稿', estMin: 45, priority: true, done: false, goalId: null, why: '周报是这周最重要的一件' },
-          { id: uid(), text: '整理相册', estMin: 15, priority: false, done: false, goalId: null, why: '' },
-          { id: uid(), text: '回复邮件', estMin: 20, priority: false, done: false, goalId: null, why: '' },
-          { id: uid(), text: '读《认知觉醒》第3章', estMin: 30, priority: false, done: true, goalId: null, why: '' }
+          { id: uid(), text: '写周报初稿', estMin: 45, priority: true, done: false, goalId: null, why: '周报是这周最重要的一件', slot: 'night', matched: false, routeNote: '' },
+          { id: uid(), text: '整理相册', estMin: 15, priority: false, done: false, goalId: null, why: '', slot: 'noon', matched: false, routeNote: '' },
+          { id: uid(), text: '回复邮件', estMin: 20, priority: false, done: false, goalId: null, why: '', slot: 'pm', matched: false, routeNote: '' },
+          { id: uid(), text: '读《认知觉醒》第3章', estMin: 30, priority: false, done: true, goalId: null, why: '', slot: 'evening', matched: true, routeNote: '' }
         ]
       },
+      inbox: [
+        { id: uid(), text: '拿快递：菜鸟驿站', at: new Date().toISOString() },
+        { id: uid(), text: '给爸爸挑生日礼物', at: new Date().toISOString() }
+      ],
       goals: [
         {
           id: uid(), title: '写公众号文章', createdAt: shiftDate(today, -4), deadline: shiftDate(today, 6),
@@ -150,9 +159,22 @@ const Store = (() => {
     if (!s.palette) s.palette = 'lavender';
     if (!s.theme) s.theme = 'system';
     if (!s.ai) s.ai = { enabled: false, provider: 'deepseek', apiKey: '', baseUrl: '', model: '' };
+    if (!s.schedule) s.schedule = {
+      enabled: false,
+      week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }
+    };
+    if (!Array.isArray(data.inbox)) data.inbox = [];
     if (!data.corrections) data.corrections = {};
     if (!data.stats) data.stats = {};
     if (!data.flags) data.flags = { goalJustDecomposed: null, streakShownDate: null, adjustedShown: {} };
+    // 旧任务补齐时间线字段
+    if (data.today && Array.isArray(data.today.tasks)) {
+      data.today.tasks.forEach(t => {
+        if (t.slot === undefined) t.slot = '';
+        if (t.matched === undefined) t.matched = false;
+        if (t.routeNote === undefined) t.routeNote = '';
+      });
+    }
   }
   function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {} }
   function reset() { localStorage.removeItem(LS_KEY); data = seed(); save(); return data; }

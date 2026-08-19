@@ -114,7 +114,7 @@ function renderHeader() {
   } else {
     const titles = { goals: '目标', backlog: '待办', review: '复盘' };
     $h.innerHTML = `
-      <div class="header-inner">
+      <div class="header-inner centered">
         <div class="greet-title">${titles[App.tab]}</div>
         <div class="header-tools">
           <button class="icon-btn" data-action="settings:open" title="设置" aria-label="设置">${settingsIcon()}</button>
@@ -389,9 +389,8 @@ function renderToday() {
     : '';
 
   return `
-    <div class="today-grid">
-      <div class="today-stack">
-        ${hero}
+    <div class="today-stack">
+      ${hero}
 
         <div class="task-bar">
           <div class="stats"><strong>${undone.length}件</strong> · 预计 ${totalMin} 分钟</div>
@@ -427,6 +426,8 @@ function renderToday() {
             <ul class="task-list">${doneTasks.map(taskRow).join('')}</ul>
           </div>` : ''}
 
+        ${statsPanel}
+
         <div class="today-bottom">
           <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
             📋 待办 <span class="n">${store.backlog.length}</span> 件
@@ -440,8 +441,6 @@ function renderToday() {
         </div>
 
         <div class="end-note">✦ 今天做完这些就够了 ✦</div>
-      </div>
-      ${window.innerWidth >= 768 ? statsPanel : ''}
     </div>`;
 }
 

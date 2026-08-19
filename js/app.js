@@ -2297,36 +2297,49 @@ function setTheme(t) {
   openSettings();
 }
 
-/* 清空时间骨架演示数据：一层确认框，清完留在设置页，不动其他配置 */
+/* 清空所有演示数据：参考成熟软件的「恢复全新状态」——
+   示例任务/目标/待办/日志/课表一键清空，只保留用户配置（主题/色盘/AI Key）。
+   一层确认框，清完留在设置页不跳转；支持撤销。 */
 function confirmClearDemo() {
   const ov = openSheet(`
     <div class="sheet confirm-sheet">
       <div class="sheet-title">确定清空所有演示数据吗？</div>
-      <div class="sheet-sub">会把课表和时间段示例全部清掉，方便你录入自己的真实安排。AI 配置等设置不受影响。</div>
+      <div class="sheet-sub">会把示例任务、目标、待办、课表和日志全部清掉，让「墨」回到全新的空状态，方便你记录自己的真实生活。AI 配置、主题等设置会保留。</div>
       <div class="sheet-acts">
         <button class="btn-ghost sheet-cancel">取消</button>
         <button class="btn-primary sheet-ok">确定</button>
       </div>
     </div>`);
   ov.querySelector('.sheet-cancel').addEventListener('click', () => ov.remove());
-  ov.querySelector('.sheet-ok').addEventListener('click', () => { ov.remove(); clearDemoSkeleton(); });
+  ov.querySelector('.sheet-ok').addEventListener('click', () => { ov.remove(); clearDemoData(); });
 }
 
-function clearDemoSkeleton() {
+function clearDemoData() {
   const store = Store.load();
-  const sk = store.settings.skeleton || {};
-  const backup = {
-    week: JSON.parse(JSON.stringify(sk.week || {})),
-    overrides: JSON.parse(JSON.stringify(sk.overrides || {})),
-    enabled: !!sk.enabled
+  const today = Store.todayStr();
+  const backup = JSON.parse(JSON.stringify(store)); // 完整快照，供撤销恢复
+  // 保留 settings（palette/theme/ai 等用户配置），其余演示数据全部清空
+  store.today = { status: null, tasks: [] };
+  store.todayDate = today;
+  store.inbox = [];
+  store.goals = [];
+  store.archivedGoals = [];
+  store.backlog = [];
+  store.completedLog = [];
+  store.dayLog = {};
+  store.aiLog = [];
+  store.corrections = {};
+  store.stats = {};
+  store.flags = {
+    goalJustDecomposed: null, streakShownDate: null, adjustedShown: {},
+    skeletonShown: false, fragRemind: {}, fragBubbleShownDate: null
   };
-  // 只清时间骨架，其余配置（含 API Key）原样保留
   store.settings.skeleton = { enabled: false, week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }, overrides: {} };
   Store.save();
-  openSettings(); // 留在设置页，刷新骨架区域为空状态
-  actionToast('已清空演示数据，可以录入自己的时间安排了', () => {
-    const s = Store.load();
-    s.settings.skeleton = { enabled: backup.enabled, week: backup.week, overrides: backup.overrides };
+  openSettings(); // 留在设置页，刷新为空状态
+  actionToast('已清空所有演示数据，现在可以记录自己的真实生活了', () => {
+    const s2 = Store.load();
+    Object.keys(backup).forEach(k => { s2[k] = backup[k]; });
     Store.save();
     openSettings();
   });

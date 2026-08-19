@@ -65,14 +65,16 @@ const Store = (() => {
     completedLog.push({ id: uid(), text: '读《认知觉醒》第3章', date: d12, doneAt: '', estMin: 30, actualMin: 30, mood: '😐', note: '' });
 
     return {
-      version: 2,
+      version: 3,
       settings: {
         palette: 'lavender', theme: 'system',
         ai: { enabled: false, provider: 'deepseek', apiKey: '', baseUrl: '', model: '' },
-        schedule: {
+        skeleton: {
           enabled: false,
-          week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }
-          // 每项: { id, start:'08:00', end:'09:40', name:'高数', place:'A301' }
+          week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] },
+          overrides: {}
+          // 每项: { id, start:'09:00', end:'12:00', tag:'工作' }
+          // overrides: { '2026-08-19': [...] } 单日临时覆盖（今日页单独调整）
         }
       },
       todayDate: today,
@@ -137,7 +139,7 @@ const Store = (() => {
       ],
       corrections: {},
       stats: {},       // { 任务文字: {n, totalMin, avg} } 用于时间预估修正
-      flags: { goalJustDecomposed: null, streakShownDate: null, adjustedShown: {} }
+      flags: { goalJustDecomposed: null, streakShownDate: null, adjustedShown: {}, skeletonShown: false }
     };
   }
 
@@ -159,14 +161,28 @@ const Store = (() => {
     if (!s.palette) s.palette = 'lavender';
     if (!s.theme) s.theme = 'system';
     if (!s.ai) s.ai = { enabled: false, provider: 'deepseek', apiKey: '', baseUrl: '', model: '' };
-    if (!s.schedule) s.schedule = {
-      enabled: false,
-      week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }
-    };
+    // 旧「课表」→「时间骨架」
+    if (!s.skeleton) {
+      if (s.schedule && s.schedule.week) {
+        const week = {};
+        Object.keys(s.schedule.week).forEach(d => {
+          week[d] = (s.schedule.week[d] || []).map(c => ({
+            id: uid(), start: c.start || '', end: c.end || '',
+            tag: c.name || (c.place ? c.place : '已占用')
+          }));
+        });
+        s.skeleton = { enabled: !!s.schedule.enabled, week, overrides: {} };
+        delete s.schedule;
+      } else {
+        s.skeleton = { enabled: false, week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }, overrides: {} };
+      }
+    }
+    if (!s.skeleton.overrides) s.skeleton.overrides = {};
     if (!Array.isArray(data.inbox)) data.inbox = [];
     if (!data.corrections) data.corrections = {};
     if (!data.stats) data.stats = {};
-    if (!data.flags) data.flags = { goalJustDecomposed: null, streakShownDate: null, adjustedShown: {} };
+    if (!data.flags) data.flags = { goalJustDecomposed: null, streakShownDate: null, adjustedShown: {}, skeletonShown: false };
+    if (data.flags.skeletonShown === undefined) data.flags.skeletonShown = false;
     // 旧任务补齐时间线字段
     if (data.today && Array.isArray(data.today.tasks)) {
       data.today.tasks.forEach(t => {

@@ -135,13 +135,109 @@ function renderView() {
   else if (App.tab === 'review') $v.innerHTML = renderReview();
   $v.classList.add('view-enter');
   // 异步 AI 个性化（失败自动回退规则版，不影响体验）
-  if (App.tab === 'today') { refreshHero(); refreshTomorrowNote(); }
+  if (App.tab === 'today') { refreshHero(); refreshTomorrowNote(); refreshTimelineAI(); }
   else if (App.tab === 'review') refreshReviewAI();
 }
 
-/* ================= 今日页 ================= */
+/* ================= 今日页 · 时间线 ================= */
+
+/** 为今日未确认任务补上规则版顺路建议（同步，确保离线也有时间线） */
+function ensureRouteSuggestions(store) {
+  const slots = AI.buildSlots(Store.todayStr());
+  const valid = new Set(slots.map(s => s.key));
+  let changed = false;
+  store.today.tasks.forEach(t => {
+    if (t.done || t.matched) return;
+    if (!t.slot || !valid.has(t.slot)) {
+      const r = AI.routeSuggestRule(t.text, t.estMin, slots);
+      t.slot = r.slot;
+      t.routeNote = r.reason;
+      changed = true;
+    }
+  });
+  if (changed) Store.save();
+}
+
+/** 异步：LLM 优化顺路建议（失败保留规则版） */
+let _tlAIBusy = false;
+async function refreshTimelineAI() {
+  if (_tlAIBusy) return;
+  const store = Store.load();
+  const need = store.today.tasks.filter(t => !t.done && !t.matched);
+  if (!need.length) return;
+  _tlAIBusy = true;
+  try {
+    const r = await AI.routeSuggest(need, Store.todayStr());
+    if (!r || !r.length) return;
+    const st2 = Store.load();
+    let changed = false;
+    r.forEach(sug => {
+      const t = st2.today.tasks.find(x => x.id === sug.taskId);
+      if (t && !t.done && !t.matched && t.slot !== sug.slot) {
+        t.slot = sug.slot; t.routeNote = sug.reason; changed = true;
+      }
+    });
+    if (changed) { Store.save(); if (App.tab === 'today') renderView(); }
+  } finally { _tlAIBusy = false; }
+}
+
+/** 确认单条顺路建议 */
+function acceptRoute(id) {
+  const store = Store.load();
+  const t = store.today.tasks.find(x => x.id === id);
+  if (!t) return;
+  t.matched = true;
+  Store.save();
+  render();
+  const slot = AI.buildSlots(Store.todayStr()).find(s => s.key === t.slot);
+  aiToast('route_accepted', { task: t.text, slot: slot ? slot.label : t.slot }, {
+    buttons: [{ label: '🕐 换个时间', action: () => adjustSlot(id) }]
+  });
+}
+
+/** 一键全确认 */
+function acceptAllRoutes() {
+  const store = Store.load();
+  const list = store.today.tasks.filter(t => !t.done && !t.matched && t.slot);
+  if (!list.length) return;
+  list.forEach(t => { t.matched = true; });
+  Store.save();
+  render();
+  aiToast('all_routes', { n: list.length });
+}
+
+/** 弹出槽位选择器（调整时间） */
+function adjustSlot(id) {
+  const store = Store.load();
+  const t = store.today.tasks.find(x => x.id === id);
+  if (!t) return;
+  const slots = AI.buildSlots(Store.todayStr()).filter(s => s.type !== 'lesson');
+  const chips = slots.map(s => `
+    <button class="slot-pick ${t.slot === s.key ? 'on' : ''}" data-action="slot:pick" data-slot="${s.key}" data-id="${id}">
+      <span class="sp-time">${s.time}</span>
+      <span class="sp-label">${s.label}</span>
+    </button>`).join('');
+  openModal(modalShell('调整时间', '选一个更顺手的时段；也可以直接拖拽卡片调整顺序', `<div class="slot-grid">${chips}</div>`));
+}
+
+/** 拖拽排序：把任务移到目标任务所在位置，并跟随其槽位 */
+let _dragId = null;
+function moveTask(fromId, toId) {
+  const store = Store.load();
+  const arr = store.today.tasks;
+  const i = arr.findIndex(x => x.id === fromId);
+  if (i < 0) return;
+  const [item] = arr.splice(i, 1);
+  item.matched = true;
+  const j = arr.findIndex(x => x.id === toId);
+  if (j >= 0) item.slot = arr[j].slot;
+  arr.splice(j >= 0 ? j : arr.length, 0, item);
+  Store.save();
+}
+
 function renderToday() {
   const store = Store.load();
+  ensureRouteSuggestions(store);
   const undone = store.today.tasks.filter(t => !t.done);
   const doneTasks = store.today.tasks.filter(t => t.done);
   const totalMin = undone.reduce((s, t) => s + t.estMin, 0);
@@ -149,15 +245,40 @@ function renderToday() {
   const freeMin = Math.max(0, budget - totalMin);
   const prioCount = undone.filter(t => t.priority).length;
 
-  // 长按已完成任务 → 即时复盘
+  const slots = AI.buildSlots(Store.todayStr());
+  const slotByKey = {};
+  slots.forEach(s => { slotByKey[s.key] = s; });
+  const rank = s => slots.findIndex(x => x.key === s);
+
+  // 未完成任务按槽位分组（保持槽位顺序）
+  const groups = [];
+  const unslotted = [];
+  undone.forEach(t => {
+    if (t.slot && slotByKey[t.slot]) {
+      let g = groups.find(x => x.key === t.slot);
+      if (!g) { g = { key: t.slot, label: slotByKey[t.slot].label, time: slotByKey[t.slot].time, hint: slotByKey[t.slot].hint, tasks: [] }; groups.push(g); }
+      g.tasks.push(t);
+    } else unslotted.push(t);
+  });
+  groups.sort((a, b) => rank(a.key) - rank(b.key));
+  if (unslotted.length) groups.unshift({ key: '_todo', label: '待安排', time: '…', hint: '等你确认后，墨会把它们嵌进你的动线', tasks: unslotted });
+
+  // 时间线任务卡片（未完成可拖拽，未确认显示顺路建议）
   const taskRow = (t) => {
     const meta = `${t.estMin}分钟${t.priority ? ' · 🔴 优先任务' : ''}`;
+    const sug = !t.done && !t.matched && t.slot && slotByKey[t.slot];
     return `
-      <li class="task ${t.done ? 'done' : ''}" data-action="${t.done ? 'task:instant' : 'task:toggle'}" data-id="${t.id}">
+      <li class="task ${t.done ? 'done' : ''}${sug ? ' has-sug' : ''}" data-action="${t.done ? 'task:instant' : 'task:toggle'}" data-id="${t.id}" ${t.done ? '' : 'draggable="true" title="拖拽可调整顺序"'}">
         <span class="check">${t.done ? '🌱' : ''}</span>
         <div class="task-body">
           <span class="task-text">${esc(t.text)}</span>
           <span class="task-meta">${meta}${t.why ? ` · ${esc(t.why)}` : ''}</span>
+          ${sug ? `
+            <div class="route-sug"><span class="sug-tag">🛣 顺路</span><span class="sug-txt">${esc(t.routeNote || slotByKey[t.slot].hint || '')}</span></div>
+            <div class="route-acts">
+              <button class="mini-btn ok" data-action="task:accept-route" data-id="${t.id}">✓ 就这么办</button>
+              <button class="mini-btn" data-action="task:adjust-slot" data-id="${t.id}">🕐 调整</button>
+            </div>` : ''}
         </div>
         <span class="flag">${t.done ? '已完成' : ''}</span>
       </li>`;
@@ -203,20 +324,36 @@ function renderToday() {
       </div>
     </div>`;
 
+  const pendingCount = undone.filter(t => !t.matched).length;
+
   return `
     <div class="today-grid">
       <div class="today-stack">
         ${hero}
         <section class="card">
           <div class="card-title">
-            <span class="t">任务</span>
+            <span class="t">时间线</span>
             <span class="meta">${undone.length}件 · 预计${totalMin}分钟</span>
           </div>
+          ${pendingCount ? `
+          <div class="timeline-toolbar">
+            <span class="tl-hint">🛣 墨已把任务嵌进你的动线</span>
+            <button class="mini-btn ok" data-action="task:accept-all">一键全确认</button>
+          </div>` : ''}
           ${backlogHint}
-          <ul class="task-list">
-            ${undone.map(taskRow).join('')}
-            ${doneTasks.map(taskRow).join('')}
-          </ul>
+          <div class="timeline">
+            ${groups.map(g => `
+              <div class="tl-group" data-slot="${g.key}">
+                <div class="tl-slot"><span class="tl-time">${g.time}</span><span class="tl-label">${g.label}</span>${g.hint ? `<span class="tl-hint-txt">${esc(g.hint)}</span>` : ''}</div>
+                <ul class="task-list tl-list">
+                  ${g.tasks.map(taskRow).join('')}
+                </ul>
+              </div>`).join('')}
+          </div>
+          ${doneTasks.length ? `
+            <div class="divider"></div>
+            <div class="tl-done-title">✅ 已完成</div>
+            <ul class="task-list">${doneTasks.map(taskRow).join('')}</ul>` : ''}
           <div class="divider"></div>
           <div class="today-bottom">
             <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
@@ -337,6 +474,31 @@ function calcStreak() {
 /* ================= 待办页 ================= */
 function renderBacklog() {
   const store = Store.load();
+  // 灵感箱（子弹笔记：先接住想法，稍后整理）
+  const inboxHtml = store.inbox.length ? store.inbox.map(item => {
+    const sug = AI.inboxSuggest(item.text);
+    return `
+      <div class="inbox-item">
+        <span class="inbox-text">${esc(item.text)}</span>
+        <div class="inbox-sug">${esc(sug.reason)}</div>
+        <div class="inbox-acts">
+          <button class="mini-btn ok" data-action="inbox:to-today" data-id="${item.id}">排进今日</button>
+          <button class="mini-btn" data-action="inbox:to-backlog" data-id="${item.id}">放待办</button>
+          <button class="mini-btn ghost" data-action="inbox:del" data-id="${item.id}">删除</button>
+        </div>
+      </div>`;
+  }).join('') : '<div class="inbox-empty">这里先“接住”你冒出来的想法，等你有空再整理。</div>';
+
+  const inboxCard = `
+    <section class="card">
+      <div class="card-title">
+        <span class="t">✏️ 灵感箱</span>
+        <span class="meta">先记下来，稍后由墨帮你归类</span>
+      </div>
+      <input class="input inbox-input" id="inbox-input" placeholder="冒出什么想法？先写在这里，不用马上分类…">
+      <div class="inbox-list">${inboxHtml}</div>
+    </section>`;
+
   // 7天提醒
   const stale7 = store.backlog.filter(b => (new Date(Store.todayStr()) - new Date(b.originalDate + 'T00:00:00')) / 864e5 >= 7);
   const remind = stale7.length ? stale7.map(b => `
@@ -371,11 +533,89 @@ function renderBacklog() {
 
   return `
     <div class="page-stack">
-      <div style="font-size:13px;color:var(--ink-2)">共 ${store.backlog.length} 件待办</div>
+      ${inboxCard}
+      <div style="font-size:13px;color:var(--ink-2);margin-top:6px">共 ${store.backlog.length} 件待办</div>
       ${remind}
       ${groupHtml}
-      <div class="hint-line">点击任务 → 标记“今天做” · 长按任务 → 删除</div>
+      <div class="hint-line">灵感箱：先记下，稍后整理 · 待办：点击 → “今天做”，长按 → 删除</div>
     </div>`;
+}
+
+/* 灵感箱动作 */
+function inboxAdd(text) {
+  const store = Store.load();
+  store.inbox.unshift({ id: Store.uid(), text: text.trim(), at: new Date().toISOString() });
+  Store.save();
+  aiToast('inbox_captured');
+  render();
+}
+function inboxToToday(id) {
+  const store = Store.load();
+  const item = store.inbox.find(x => x.id === id);
+  if (!item) return;
+  const sug = AI.inboxSuggest(item.text);
+  const slots = AI.buildSlots(Store.todayStr());
+  const slot = (sug.action === 'today' && slots.some(s => s.key === sug.slot)) ? sug.slot
+    : (slots.find(s => s.type !== 'lesson') ? slots.find(s => s.type !== 'lesson').key : 'night');
+  const label = slots.find(s => s.key === slot);
+  store.today.tasks.push({
+    id: Store.uid(), text: item.text, estMin: 15, priority: false, done: false, goalId: null,
+    why: '', slot, matched: true, routeNote: sug.reason || ''
+  });
+  store.inbox = store.inbox.filter(x => x.id !== id);
+  Store.save();
+  render();
+  aiToast('inbox_today', { task: item.text, slot: label ? label.label : slot, reason: sug.reason || '' });
+}
+function inboxToBacklog(id) {
+  const store = Store.load();
+  const item = store.inbox.find(x => x.id === id);
+  if (!item) return;
+  store.backlog.unshift({ id: Store.uid(), text: item.text, estMin: 15, priority: false, originalDate: Store.todayStr(), why: '' });
+  store.inbox = store.inbox.filter(x => x.id !== id);
+  Store.save();
+  render();
+  aiToast('inbox_backlog', { task: item.text });
+}
+function inboxDel(id) {
+  const store = Store.load();
+  store.inbox = store.inbox.filter(x => x.id !== id);
+  Store.save();
+  render();
+}
+function inboxCopy(id) {
+  const store = Store.load();
+  const item = store.inbox.find(x => x.id === id);
+  if (!item) return;
+  const done = () => toast('已复制，可以粘贴到任何地方。', { ai: true, duration: 2000 });
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(item.text).then(done).catch(done);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = item.text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+    done();
+  }
+}
+
+/** 选择时间槽：手动调整后视为已确认 */
+function pickSlot(id, slotKey) {
+  const store = Store.load();
+  const t = store.today.tasks.find(x => x.id === id);
+  if (!t) return;
+  const slots = AI.buildSlots(Store.todayStr());
+  const s = slots.find(x => x.key === slotKey);
+  if (!s) return;
+  t.slot = s.key;
+  t.matched = true;
+  t.routeNote = s.hint || '';
+  Store.save();
+  closeModal();
+  render();
+  aiToast('route_accepted', { task: t.text, slot: s.label });
 }
 
 /* ================= 目标页 ================= */
@@ -571,10 +811,15 @@ function bubble(text, align = 'left', id = '') {
 function toast(text, opts = {}) {
   const root = $('#toast-root');
   const aiId = Store.uid();
+  const buttons = opts.buttons && opts.buttons.length
+    ? `<div class="toast-actions">${opts.buttons.map((b, i) =>
+        `<button class="ta ${b.kind || ''}" data-tidx="${i}">${esc(b.label)}</button>`).join('')}</div>`
+    : '';
   const t = el(`
     <div class="toast ${opts.ai ? 'ai' : ''}" style="pointer-events:auto">
-      <div class="ai-bubble" style="max-width:${opts.wide ? '340px' : '280px'};background:${opts.ai ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.7)'};backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
-        ${esc(text)}
+      <div class="ai-bubble" style="max-width:${opts.wide ? '340px' : '300px'};background:${opts.ai ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.7)'};backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
+        <div class="toast-text">${esc(text)}</div>
+        ${buttons}
         <div class="who"><span class="dot">墨</span>我</div>
       </div>
     </div>`);
@@ -583,7 +828,20 @@ function toast(text, opts = {}) {
   const log = Store.load();
   log.aiLog.push({ id: aiId, t: new Date().toTimeString().slice(0, 5), text });
   Store.save();
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, opts.duration ?? 5000);
+  const dismiss = () => { t.classList.add('out'); setTimeout(() => t.remove(), 400); };
+  if (buttons) {
+    t.querySelectorAll('.ta').forEach((b, i) => {
+      b.addEventListener('click', () => {
+        clearTimeout(t._timer);
+        const fn = opts.buttons[i] && opts.buttons[i].action;
+        if (typeof fn === 'function') fn();
+        dismiss();
+      });
+    });
+    t._timer = setTimeout(dismiss, (opts.duration ?? 5000) + 4000);
+  } else {
+    t._timer = setTimeout(dismiss, opts.duration ?? 5000);
+  }
   return t;
 }
 
@@ -593,8 +851,8 @@ async function aiToast(trigger, ctx = {}, opts = {}) {
   const t = toast(rule, opts);
   const smart = await AI.copySmart(trigger, ctx);
   if (!smart || smart === rule || !t.isConnected) return;
-  const b = t.querySelector('.ai-bubble');
-  if (b) b.innerHTML = `${esc(smart)}<div class="who"><span class="dot">墨</span>我</div>`;
+  const txt = t.querySelector('.toast-text');
+  if (txt) txt.textContent = smart;
   const log = Store.load();
   const item = log.aiLog.find(x => x.id === t.dataset.aiId);
   if (item) item.text = smart;
@@ -759,26 +1017,20 @@ function renderOcrConfirm() {
   const lines = draft.lines.map((l, i) => `
     <div class="ocr-line" data-idx="${i}">
       <span class="txt"><span class="t-view">${esc(l.text)}</span></span>
-      <span class="tm"><input type="number" min="5" max="240" step="5" value="${l.estMin}" data-idx="${i}" class="t-min">分</span>
-      <button class="edit-btn" data-action="ocr:edit" data-idx="${i}">✏️</button>
+      <button class="edit-btn" data-action="ocr:edit" data-idx="${i}" title="编辑">✏️</button>
+      <button class="edit-btn" data-action="ocr:copy" data-idx="${i}" title="复制">📋</button>
     </div>`).join('');
 
   openModal(modalShell(
-    '识别结果', '如果识别有误，点击任务文字即可修改。',
+    '识别结果', '只做文字提取：不自动修正、不联想、不分类。识别有误可点击 ✏️ 修改，全部内容归你掌控。',
     lines,
     `<div class="modal-actions">
+      <button class="btn-ghost" data-action="ocr:copy-all">复制全部</button>
       <button class="btn-ghost" data-action="ocr:discard">取消</button>
       <button class="btn-primary" data-action="ocr:today">加入今日</button>
       <button class="btn-primary" style="background:var(--card);border:.5px solid var(--line);color:var(--ink)" data-action="ocr:backlog">加入待办</button>
     </div>`
   ));
-
-  $$('.t-min').forEach(inp => {
-    inp.addEventListener('change', () => {
-      const idx = Number(inp.dataset.idx);
-      App.ocrDraft.lines[idx].estMin = clamp(Number(inp.value) || 20, 5, 240);
-    });
-  });
 }
 
 function startOcrEdit(idx) {
@@ -790,15 +1042,36 @@ function startOcrEdit(idx) {
   inp.setSelectionRange(inp.value.length, inp.value.length);
   const commit = () => {
     const val = inp.value.trim();
-    if (val && val !== l.original) {
-      Store.load().corrections[l.original] = val;
-      Store.save();
-      l.text = val;
-    } else if (val) l.text = val;
+    if (val) l.text = val;   // 只改用户自己改的内容，绝不自动补全/修正
     renderOcrConfirm();
   };
   inp.addEventListener('blur', commit);
   inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
+}
+
+function ocrCopy(idx) {
+  const l = App.ocrDraft.lines[idx];
+  if (!l) return;
+  copyText(l.text, '已复制这一行。');
+}
+function ocrCopyAll() {
+  const draft = App.ocrDraft;
+  if (!draft) return;
+  copyText(draft.lines.map(l => l.text).join('\n'), '已复制全部文本。');
+}
+function copyText(text, okMsg) {
+  const done = () => toast(okMsg || '已复制。', { ai: true, duration: 2200 });
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(done);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+    done();
+  }
 }
 
 /* ================= 事件绑定 ================= */
@@ -816,6 +1089,41 @@ function bindEvents() {
 
   const input = $('#camera-input');
   input.addEventListener('change', () => handlePhoto(input.files[0]));
+
+  // 灵感箱：回车快速捕捉（事件委托，避免重复绑定）
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target && e.target.id === 'inbox-input') {
+      const v = e.target.value.trim();
+      if (v) { inboxAdd(v); e.target.value = ''; }
+    }
+  });
+
+  // 时间线拖拽排序（桌面端；手机端用"调整"按钮）
+  document.addEventListener('dragstart', e => {
+    const li = e.target.closest('.task');
+    if (li && li.dataset.action === 'task:toggle' && !li.classList.contains('done')) {
+      _dragId = li.dataset.id;
+      li.classList.add('dragging');
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    }
+  });
+  document.addEventListener('dragover', e => {
+    const li = e.target.closest('.task');
+    if (li && _dragId && li.dataset.id !== _dragId) e.preventDefault();
+  });
+  document.addEventListener('drop', e => {
+    const li = e.target.closest('.task');
+    if (!li || !_dragId || li.dataset.id === _dragId) return;
+    e.preventDefault();
+    moveTask(_dragId, li.dataset.id);
+    _dragId = null;
+    render();
+  });
+  document.addEventListener('dragend', e => {
+    const li = e.target.closest('.task');
+    if (li) li.classList.remove('dragging');
+    _dragId = null;
+  });
 
   // 深色模式跟随系统
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -874,6 +1182,8 @@ function onClick(e) {
     case 'review:tab': App.reviewTab = btn.dataset.val; renderView(); break;
     case 'review:save': saveReview(); break;
     case 'ocr:edit': startOcrEdit(Number(btn.dataset.idx)); break;
+    case 'ocr:copy': ocrCopy(Number(btn.dataset.idx)); break;
+    case 'ocr:copy-all': ocrCopyAll(); break;
     case 'ocr:today': commitOcr('today'); break;
     case 'ocr:backlog': commitOcr('backlog'); break;
     case 'ocr:discard': closeModal(); App.ocrDraft = null; break;
@@ -882,6 +1192,18 @@ function onClick(e) {
     case 'settings:theme': setTheme(btn.dataset.val); break;
     case 'settings:reset': resetAll(); break;
     case 'settings:ai-test': testAi(); break;
+    case 'schedule:edit': openScheduleDay(btn.dataset.day); break;
+    case 'schedule:add': addScheduleRow(); break;
+    case 'schedule:del': delScheduleRow(btn.dataset.idx); break;
+    case 'schedule:save': saveScheduleDay(btn.dataset.day); break;
+    case 'task:accept-route': acceptRoute(id); break;
+    case 'task:accept-all': acceptAllRoutes(); break;
+    case 'task:adjust-slot': adjustSlot(id); break;
+    case 'slot:pick': pickSlot(btn.dataset.id, btn.dataset.slot); break;
+    case 'inbox:to-today': inboxToToday(id); break;
+    case 'inbox:to-backlog': inboxToBacklog(id); break;
+    case 'inbox:del': inboxDel(id); break;
+    case 'inbox:copy': inboxCopy(id); break;
   }
 }
 
@@ -1137,9 +1459,9 @@ function commitOcr(target) {
   const today = Store.todayStr();
   draft.lines.forEach(l => {
     if (target === 'today') {
-      store.today.tasks.push({ id: Store.uid(), text: l.text, estMin: l.estMin, priority: false, done: false, goalId: null, why: '' });
+      store.today.tasks.push({ id: Store.uid(), text: l.text, estMin: 15, priority: false, done: false, goalId: null, why: '', slot: '', matched: false, routeNote: '' });
     } else {
-      store.backlog.unshift({ id: Store.uid(), text: l.text, estMin: l.estMin, priority: false, originalDate: today, why: '' });
+      store.backlog.unshift({ id: Store.uid(), text: l.text, estMin: 15, priority: false, originalDate: today, why: '' });
     }
   });
   Store.save();
@@ -1202,6 +1524,18 @@ function openSettings() {
     <input class="input" data-ai="apiKey" type="password" placeholder="${esc(prov.tip)}" value="${esc(ai.apiKey || '')}" style="margin-top:8px">
     <input class="input" data-ai="model" placeholder="模型（留空用服务商默认；豆包填 ep-… 接入点）" value="${esc(ai.model || '')}" style="margin-top:8px">
     <input class="input" data-ai="baseUrl" placeholder="Base URL（留空用服务商默认）" value="${esc(ai.baseUrl || '')}" style="margin-top:8px">
+
+    <div class="setting-row" style="margin-top:14px">
+      <div><div class="sl">📚 课表</div><div class="sd">输入课表后，墨会把顺路的事嵌进课间、午间等空档，让你出门顺手就办完。</div></div>
+    </div>
+    <label class="ai-toggle"><input type="checkbox" data-sched="enabled" ${store.settings.schedule.enabled ? 'checked' : ''}> 启用课表匹配动线</label>
+    <div class="week-editor">
+      ${WEEK_DAYS.map(([key, label]) => `
+        <div class="week-row">
+          <span class="day">${label}</span>
+          <button class="week-edit" data-action="schedule:edit" data-day="${key}">${(store.settings.schedule.week[key] || []).length ? `${store.settings.schedule.week[key].length} 节课` : '未设置'}</button>
+        </div>`).join('')}
+    </div>
     <div class="modal-actions">
       <button class="btn-ghost" data-action="settings:ai-test">测试连接</button>
       <button class="btn-ghost" data-action="settings:reset">重置演示数据</button>
@@ -1225,6 +1559,84 @@ function openSettings() {
     Store.save();
     openSettings();
   }));
+  // 课表开关
+  $$('#modal-root [data-sched]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const s = Store.load();
+      s.settings.schedule = s.settings.schedule || { enabled: false, week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] } };
+      s.settings.schedule.enabled = inp.checked;
+      Store.save();
+      aiToast('schedule_saved', {}, { fallback: inp.checked ? '课表已启用，之后我会把顺路的事嵌进课间和午间。' : '已关闭课表匹配，改用默认时段安排。' });
+    });
+  });
+}
+
+/* 课表编辑 */
+const WEEK_DAYS = [
+  ['mon', '周一'], ['tue', '周二'], ['wed', '周三'], ['thu', '周四'],
+  ['fri', '周五'], ['sat', '周六'], ['sun', '周日']
+];
+function openScheduleDay(day) {
+  const store = Store.load();
+  const sched = store.settings.schedule;
+  const list = (sched.week[day] || []).slice();
+  const rows = list.length ? list.map((c, i) => `
+    <div class="srow" data-idx="${i}">
+      <input class="input s-time" data-f="start" placeholder="开始 如08:00" value="${esc(c.start || '')}">
+      <input class="input s-time" data-f="end" placeholder="结束 如09:40" value="${esc(c.end || '')}">
+      <input class="input s-name" data-f="name" placeholder="课程名 如高数" value="${esc(c.name || '')}">
+      <input class="input s-place" data-f="place" placeholder="地点 如A301" value="${esc(c.place || '')}">
+      <button class="mini-btn ghost" data-action="schedule:del" data-idx="${i}">删</button>
+    </div>`).join('') : '';
+  openModal(modalShell(
+    `${WEEK_DAYS.find(d => d[0] === day)[1]}课表`, '填写课程的起止时间与名称，墨会在课间/午间安排顺路的事。',
+    `<div class="sched-editor" id="sched-editor" data-day="${day}">
+      ${rows}
+      <button class="mini-btn" data-action="schedule:add" style="margin-top:8px">+ 添加课程</button>
+    </div>`,
+    `<div class="modal-actions">
+      <button class="btn-ghost" data-action="modal:close">取消</button>
+      <button class="btn-primary" data-action="schedule:save" data-day="${day}">保存课表</button>
+    </div>`
+  ));
+}
+function addScheduleRow() {
+  const box = $('#sched-editor');
+  const add = box.querySelector('[data-action="schedule:add"]');
+  const row = el(`<div class="srow">
+      <input class="input s-time" data-f="start" placeholder="开始 如08:00">
+      <input class="input s-time" data-f="end" placeholder="结束 如09:40">
+      <input class="input s-name" data-f="name" placeholder="课程名 如高数">
+      <input class="input s-place" data-f="place" placeholder="地点 如A301">
+      <button class="mini-btn ghost" data-action="schedule:del" data-idx="-1">删</button>
+    </div>`);
+  box.insertBefore(row, add);
+}
+function delScheduleRow(idx) {
+  const box = $('#sched-editor');
+  const rows = [...box.querySelectorAll('.srow')];
+  const target = rows[idx];
+  if (target) target.remove();
+  // 修正剩余行 data-idx
+  [...box.querySelectorAll('.srow')].forEach((r, i) => { r.dataset.idx = i; });
+}
+function saveScheduleDay(day) {
+  const store = Store.load();
+  store.settings.schedule = store.settings.schedule || { enabled: false, week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] } };
+  const rows = [...$$('#sched-editor .srow')];
+  const list = [];
+  rows.forEach(r => {
+    const start = r.querySelector('[data-f="start"]').value.trim();
+    const end = r.querySelector('[data-f="end"]').value.trim();
+    const name = r.querySelector('[data-f="name"]').value.trim();
+    const place = r.querySelector('[data-f="place"]').value.trim();
+    if (start || end || name) list.push({ id: Store.uid(), start, end, name: name || '课程', place });
+  });
+  list.sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+  store.settings.schedule.week[day] = list;
+  Store.save();
+  closeModal();
+  aiToast('schedule_saved', {}, { fallback: `${WEEK_DAYS.find(d => d[0] === day)[1]}课表已保存（${list.length} 节课）。` });
 }
 
 /* AI 连接测试 */

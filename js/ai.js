@@ -220,38 +220,170 @@ const AI = (() => {
     return _ruleGoalDecompose(input, deadlineStr);
   }
 
-  /* ================= OCR 模拟（可替换为百度 OCR 手写版） ================= */
+  /* ================= OCR（只做文字提取，不做任何 AI 补全/修正/联想/分类） ================= */
   const OCR_POOL = [
-    { orig: '搜索3篇参考文章并做笔记', typo: '搜索3篇参考文童并做笔记' },
-    { orig: '列出文章大纲', typo: '列出文童大纲' },
-    { orig: '写周报初稿', typo: '写周报初搞' },
-    { orig: '给妈妈打电话', typo: '给妈妈打电诂' },
-    { orig: '读《认知觉醒》第3章', typo: '读《认知觉酲》第3章' },
-    { orig: '回复邮件', typo: '回复邮件' },
-    { orig: '买本周计划本', typo: '买本周计刬本' },
-    { orig: '整理书桌', typo: '整理书桌' },
-    { orig: '散步30分钟', typo: '散步30分祌' }
+    '搜索3篇参考文章并做笔记', '列出文章大纲', '写周报初稿', '给妈妈打电话',
+    '读《认知觉醒》第3章', '回复邮件', '买本周计划本', '整理书桌', '散步30分钟'
   ];
 
   /**
    * 模拟拍照 OCR。真实实现：调用百度 OCR 手写版 API 后返回同结构。
-   * @returns {{lines:{original:string,text:string,estMin:number,edited:boolean}[]}}
+   * 铁律：只返回识别到的原始文本，绝不补全、修正、联想或分类。
+   * @returns {{lines:{original:string,text:string,estMin:null,edited:boolean}[]}}
    */
   function ocrSimulate() {
-    const store = Store.load();
     const n = 2 + Math.floor(Math.random() * 3); // 2-4 条
     const picked = [...OCR_POOL].sort(() => Math.random() - 0.5).slice(0, n);
-    const lines = picked.map(p => {
-      const fixed = store.corrections[p.orig];
-      const useTypo = Math.random() < 0.55 && !fixed;
-      return {
-        original: p.orig,
-        text: fixed || (useTypo ? p.typo : p.orig),
-        estMin: 10 + Math.round(Math.random() * 3) * 5,
-        edited: !!fixed
-      };
-    });
+    const lines = picked.map(p => ({
+      original: p,
+      text: p,
+      estMin: null,
+      edited: false
+    }));
     return { lines };
+  }
+
+  /* ================= 动线系统：课表 → 时间槽 → 顺路推荐 ================= */
+  const DOW_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const DEFAULT_SLOTS = [
+    { key: 'early', label: '🌅 清晨', time: '07:30', type: 'focus', hint: '安静的自我时间' },
+    { key: 'am', label: '☀️ 上午', time: '09:30', type: 'focus', hint: '' },
+    { key: 'noon', label: '🍚 午间', time: '12:10', type: 'route', hint: '出门吃饭，顺路办事' },
+    { key: 'pm', label: '🌤 下午', time: '14:30', type: 'focus', hint: '' },
+    { key: 'evening', label: '🌙 傍晚', time: '17:40', type: 'route', hint: '课后/下班路上' },
+    { key: 'night', label: '🌃 晚间', time: '19:30', type: 'focus', hint: '一天里最安静的一段' },
+    { key: 'sleep', label: '🛌 睡前', time: '21:40', type: 'focus', hint: '轻量收尾' }
+  ];
+
+  /** 根据日期 + 课表生成当天可用的时间槽（含课程空档的"顺路"槽位） */
+  function buildSlots(date) {
+    const store = Store.load();
+    const sched = store.settings.schedule;
+    if (!sched || !sched.enabled) return DEFAULT_SLOTS.map(s => ({ ...s }));
+    const dow = DOW_KEYS[new Date(date + 'T00:00:00').getDay()];
+    const lessons = ((sched.week && sched.week[dow]) || []).slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+    if (!lessons.length) return DEFAULT_SLOTS.map(s => ({ ...s }));
+    const slots = [];
+    slots.push({ key: 'early', label: '🌅 课前', time: '07:30', type: 'focus', hint: '上课前，安静的自我时间' });
+    lessons.forEach((l, i) => {
+      if (i > 0) {
+        const prev = lessons[i - 1];
+        slots.push({
+          key: 'gap' + i, label: '🕐 课间' + i, time: prev.end || '10:00',
+          type: 'route', hint: '两节课之间，顺路办事'
+        });
+      }
+      slots.push({ key: 'lesson' + i, label: '📚 ' + (l.name || '上课'), time: l.start || '', type: 'lesson', lesson: l, hint: '' });
+    });
+    slots.push({ key: 'noon', label: '🍚 午间', time: '12:10', type: 'route', hint: '吃饭出门，顺路办事' });
+    slots.push({ key: 'after', label: '🌙 课后', time: '17:30', type: 'route', hint: '下课后路上顺路' });
+    slots.push({ key: 'night', label: '🌃 晚间', time: '19:30', type: 'focus', hint: '一天里最安静的一段' });
+    slots.push({ key: 'sleep', label: '🛌 睡前', time: '21:40', type: 'focus', hint: '轻量收尾' });
+    return slots;
+  }
+
+  /** 规则版顺路匹配：根据任务关键词 + 预估时长，推荐最顺手的槽位 */
+  function routeSuggestRule(text, estMin, slots) {
+    const route = slots.filter(s => s.type === 'route');
+    const focus = slots.filter(s => s.type === 'focus');
+    const noon = slots.find(s => s.key === 'noon');
+    const evening = slots.find(s => s.key === 'evening') || slots.find(s => s.key === 'after');
+    const night = slots.find(s => s.key === 'night');
+    const firstGap = route[0];
+    if (/快递|取件|寄|签收|驿站|包裹|取票|打印|复印|买|购|采购|拿/.test(text)) {
+      return { slot: (noon || firstGap).key, reason: '出门路上顺手就办了，不用专门跑一趟', type: 'route' };
+    }
+    if (/电话|视频|联系|问候|聊|打电话/.test(text)) {
+      return { slot: (evening || noon).key, reason: '饭后散步打个电话，最不占用额外时间', type: 'route' };
+    }
+    if (/运动|跑步|散步|拉伸|锻炼|健身/.test(text)) {
+      return { slot: (evening || firstGap).key, reason: '课后顺路动一动，正好缓解久坐', type: 'route' };
+    }
+    if (/写|读|背|复习|学|作业|笔记|复盘|预习|考/.test(text)) {
+      return { slot: (night || evening).key, reason: '放到安静的时间段，专注起来更高效', type: 'focus' };
+    }
+    if (estMin && estMin <= 15) {
+      return { slot: (firstGap || noon).key, reason: '十几分钟，课间/饭后就够', type: 'route' };
+    }
+    return { slot: (evening || night).key, reason: '安排到傍晚，不急不赶', type: 'focus' };
+  }
+
+  /**
+   * 顺路推荐（async）：对今日未确认任务，返回 [{taskId,text,slot,reason}]
+   * LLM 结合课表空档做最优匹配；失败/离线回退规则版。
+   */
+  async function routeSuggest(tasks, date) {
+    const slots = buildSlots(date);
+    const base = tasks.filter(t => !t.done && !t.matched).map(t => {
+      const r = routeSuggestRule(t.text, t.estMin, slots);
+      return { taskId: t.id, text: t.text, estMin: t.estMin || null, slot: r.slot, reason: r.reason, type: r.type };
+    });
+    if (!base.length) return base;
+    if (!canCallLLM()) return base;
+    const store = Store.load();
+    const sched = store.settings.schedule;
+    const dow = DOW_KEYS[new Date(date + 'T00:00:00').getDay()];
+    const lessons = sched && sched.enabled && sched.week ? sched.week[dow] || [] : [];
+    const gapInfo = slots.filter(s => s.type !== 'lesson')
+      .map(s => `${s.key}(${s.label} ${s.time} ${s.hint})`).join('；');
+    const prompt = `今天是 ${Store.fmtDOW(date)}（${date}），课表：${lessons.length ? lessons.map(l => `${l.start}-${l.end} ${l.name}`).join('、') : '无课'}。可安排的空档槽位：${gapInfo}。
+待安排任务：${JSON.stringify(base.map(b => ({ id: b.taskId, text: b.text, estMin: b.estMin })))}。
+请为每个任务选择最合适的空档槽位，原则：顺路优先（能在课间/午间/课后路上顺手完成的绝不让用户多走一步）、兼顾专注型任务（学习类放安静时段）、减少多余动作。规则建议仅供参考，可优化。
+严格输出 JSON 数组：[{"taskId":"…","slot":"…","reason":"≤20字"}]，slot 必须是上面列出的 key 之一，不要输出任何其他文字。`;
+    const r = await LLM.chat([
+      { role: 'system', content: PERSONA + '你擅长把任务自然地嵌进用户每天的行程，让事情顺路发生。只输出 JSON。' },
+      { role: 'user', content: prompt }
+    ], { json: true, maxTokens: 800, temperature: 0.3 });
+    if (Array.isArray(r) && r.length) {
+      markOk();
+      const valid = new Set(slots.filter(s => s.type !== 'lesson').map(s => s.key));
+      const merged = base.map(b => {
+        const hit = r.find(x => x && x.taskId === b.taskId);
+        if (hit && valid.has(hit.slot)) return { ...b, slot: hit.slot, reason: String(hit.reason || b.reason).slice(0, 24) };
+        return b;
+      });
+      return merged;
+    }
+    markFail();
+    return base;
+  }
+
+  /** 灵感箱整理建议（规则版，离线兜底）：先接住想法，再判断去向 */
+  function inboxSuggest(text) {
+    if (/快递|取件|寄|签收|驿站|包裹|取票|打印|复印|买|购|拿/.test(text)) {
+      return { action: 'today', slot: 'noon', reason: '适合午间出门顺路办，不用专门跑一趟' };
+    }
+    if (/写|读|学|复习|作业|背|笔记/.test(text)) {
+      return { action: 'today', slot: 'night', reason: '放到晚间安静时段，专注完成' };
+    }
+    if (/电话|视频|联系|问候/.test(text)) {
+      return { action: 'today', slot: 'evening', reason: '饭后打个电话，顺路又不占时间' };
+    }
+    return { action: 'backlog', slot: null, reason: '先放待办，之后由你决定安排' };
+  }
+
+  /** 灵感箱整理建议（async，LLM 优先） */
+  async function inboxSuggestSmart(text) {
+    if (!canCallLLM()) return inboxSuggest(text);
+    const slots = buildSlots(Store.todayStr()).filter(s => s.type !== 'lesson');
+    const prompt = `用户刚刚冒出一个想法：「${text}」。请判断它的最佳去向：
+a) today：今天就能顺路/顺手完成（必须给一个最合适的空档槽位 key）
+b) backlog：放待办，之后安排
+c) drop：不值得记录
+今天可用槽位：${slots.map(s => `${s.key}(${s.label} ${s.hint})`).join('；')}
+严格输出 JSON：{"action":"today|backlog|drop","slot":"槽位key或null","reason":"≤18字"}`;
+    const r = await LLM.chat([
+      { role: 'system', content: PERSONA + '你在帮用户做极简的"接住想法→自动分类"：只输出 JSON。' },
+      { role: 'user', content: prompt }
+    ], { json: true, maxTokens: 200, temperature: 0.4 });
+    if (r && (r.action === 'today' || r.action === 'backlog' || r.action === 'drop')) {
+      markOk();
+      const valid = new Set(slots.map(s => s.key));
+      const slot = valid.has(r.slot) ? r.slot : (r.action === 'today' ? 'noon' : null);
+      return { action: r.action, slot, reason: String(r.reason || '').slice(0, 20) };
+    }
+    markFail();
+    return inboxSuggest(text);
   }
 
   /* ================= 话术生成 ================= */
@@ -304,6 +436,20 @@ const AI = (() => {
         return `状态偏低时不用硬撑。已把"${ctx.task}"移到待办，明天再排回来就好。`;
       case 'review_saved':
         return '记录好了。完成本身就是意义。';
+      case 'route_suggest':
+        return `"${ctx.task}"放在${ctx.slot}：${ctx.reason}。要按这个顺路计划来吗？`;
+      case 'route_accepted':
+        return `好，已把"${ctx.task}"安排在${ctx.slot}。出门顺手就办了，不用多走一步。`;
+      case 'all_routes':
+        return `已把 ${ctx.n} 件事嵌进今天的时间线，都是顺路的。`;
+      case 'inbox_captured':
+        return '先记下了。等你有空，我帮你分分类。';
+      case 'inbox_today':
+        return `已把"${ctx.task}"排进${ctx.slot}${ctx.reason ? '：' + ctx.reason : ''}。`;
+      case 'inbox_backlog':
+        return `已把"${ctx.task}"放进待办，晚点再安排。`;
+      case 'schedule_saved':
+        return '课表已更新。之后我会把顺路的事嵌进课间和午间。';
       default:
         return '';
     }
@@ -334,7 +480,14 @@ const AI = (() => {
     task_moved_out: '因状态偏低，系统把1件事移到了待办',
     review_saved: '用户完成了一次即时复盘记录',
     ai_connected: 'AI 服务连接测试成功',
-    ai_failed: 'AI 服务连接测试失败'
+    ai_failed: 'AI 服务连接测试失败',
+    route_suggest: 'AI 为某个今日任务推荐了顺路的执行时机',
+    route_accepted: '用户确认接受了一条顺路建议',
+    all_routes: '用户一键确认了所有顺路建议',
+    inbox_captured: '用户往灵感箱记了一条想法，等待整理',
+    inbox_today: '一条灵感被排进今日任务并匹配了时间槽',
+    inbox_backlog: '一条灵感被移入待办',
+    schedule_saved: '用户保存了新的课表'
   };
 
   /**
@@ -508,6 +661,7 @@ const AI = (() => {
   return {
     goalDecompose, ocrSimulate, copy, copySmart,
     weeklyReport, weeklyNarration, monthlyReport, monthlyNarration,
-    suggestTomorrow, tomorrowPlan, userContext
+    suggestTomorrow, tomorrowPlan, userContext,
+    buildSlots, routeSuggest, routeSuggestRule, inboxSuggest, inboxSuggestSmart
   };
 })();

@@ -149,14 +149,15 @@ const Store = (() => {
 
   /* ---------- 读写 ---------- */
   let data = null;
+  let migrated = false;
   function load() {
-    if (data) { migrate(); return data; }
+    if (data) return data;
     try {
       const raw = localStorage.getItem(LS_KEY);
-      if (raw) { data = JSON.parse(raw); migrate(); return data; }
+      if (raw) { data = JSON.parse(raw); }
     } catch (e) { /* 损坏则重建 */ }
-    data = seed();
-    save();
+    if (!data) { data = seed(); save(); }
+    if (!migrated) { migrate(); migrated = true; }
     return data;
   }
   /** 兼容旧数据：补齐缺失字段 */

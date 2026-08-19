@@ -95,7 +95,7 @@ function renderHeader() {
   const today = Store.todayStr();
   if (App.tab === 'today') {
     const h = new Date().getHours();
-    const greet = h < 11 ? '☀️ 早安，今天。' : h < 18 ? '☀️ 下午好，今天。' : '🌙 晚上好，今天。';
+    const greet = h < 11 ? '早安，今天。' : h < 18 ? '下午好，今天。' : '晚上好，今天。';
     const moodBtns = ['😊', '😐', '😔'].map(m =>
       `<button class="mood ${store.today.status === m ? 'on' : ''}" data-action="mood:set" data-val="${m}" title="${App.moodLabels[m]}">${m}</button>`
     ).join('');
@@ -267,15 +267,20 @@ function renderToday() {
 
   // 时间线任务卡片：点击看详情，复选框标记完成，左滑/长按呼出操作
   const taskRow = (t) => {
-    const meta = `${t.estMin}分钟${t.priority ? ' · 🔴 优先任务' : ''}`;
     const sug = !t.done && !t.matched && t.slot && slotByKey[t.slot];
     const frag = AI.isFragTask(t.text, t.estMin) ? '<span class="bolt" title="适合碎片时间">⚡</span>' : '';
+    // 设计稿 v2：标签组（优先 / 顺路 / 用时 / 原因）
+    const tags = `
+      ${t.priority ? '<span class="tag priority">🔴 优先</span>' : ''}
+      ${sug ? '<span class="tag green">🛣 顺路</span>' : ''}
+      <span class="time">${t.estMin}分钟</span>
+      ${t.why ? `<span class="hint">${esc(t.why)}</span>` : ''}`;
     return `
       <li class="task ${t.done ? 'done' : ''}${t.doing ? ' doing' : ''}${sug ? ' has-sug' : ''}" data-action="task:detail" data-id="${t.id}" ${t.done ? '' : 'draggable="true" title="点击查看详情 · 拖拽可调整顺序"'}">
         <span class="check" data-action="task:check" data-id="${t.id}">${t.done ? '🌱' : ''}</span>
         <div class="task-body">
           <span class="task-text">${esc(t.text)}${frag}</span>
-          <span class="task-meta">${meta}${t.why ? ` · ${esc(t.why)}` : ''}</span>
+          <span class="task-meta">${tags}</span>
           ${sug ? `
             <div class="route-sug"><span class="sug-tag">🛣 顺路</span><span class="sug-txt">${esc(t.routeNote || slotByKey[t.slot].hint || '')}</span></div>
             <div class="route-acts">
@@ -371,42 +376,52 @@ function renderToday() {
     <div class="today-grid">
       <div class="today-stack">
         ${hero}
-        <section class="card">
-          <div class="card-title">
-            <span class="t">时间线</span>
-            <span class="meta">${undone.length}件 · 预计${totalMin}分钟</span>
-            ${todaySkelBtn}
-          </div>
-          ${pendingCount ? `
-          <div class="timeline-toolbar">
-            <span class="tl-hint">🛣 墨已把任务嵌进你的动线</span>
-            <button class="mini-btn ok" data-action="task:accept-all">一键全确认</button>
+
+        <div class="task-bar">
+          <div class="stats"><strong>${undone.length}件</strong> · 预计 ${totalMin} 分钟</div>
+          ${todaySkelBtn}
+        </div>
+
+        ${pendingCount ? `
+        <div class="confirm-all">
+          <span class="label">🛣 墨已把任务放进你的动线</span>
+          <button class="btn" data-action="task:accept-all">一键全确认</button>
+        </div>` : ''}
+
+        ${backlogHint}
+        ${fragCard}
+
+        <div class="timeline">
+          ${groups.map(g => `
+            <div class="timeline-block" data-slot="${g.key}">
+              <div class="time-label">
+                <span class="time">${g.time}</span>
+                <span class="label">${g.label}</span>
+                ${g.hint ? `<span class="sub">${esc(g.hint)}</span>` : ''}
+              </div>
+              <ul class="task-list tl-list">
+                ${g.tasks.map(taskRow).join('')}
+              </ul>
+            </div>`).join('')}
+        </div>
+
+        ${doneTasks.length ? `
+          <div class="completed-section">
+            <div class="label">✅ 已完成</div>
+            <ul class="task-list">${doneTasks.map(taskRow).join('')}</ul>
           </div>` : ''}
-          ${backlogHint}
-          ${fragCard}
-          <div class="timeline">
-            ${groups.map(g => `
-              <div class="tl-group" data-slot="${g.key}">
-                <div class="tl-slot"><span class="tl-time">${g.time}</span><span class="tl-label">${g.label}</span>${g.hint ? `<span class="tl-hint-txt">${esc(g.hint)}</span>` : ''}</div>
-                <ul class="task-list tl-list">
-                  ${g.tasks.map(taskRow).join('')}
-                </ul>
-              </div>`).join('')}
-          </div>
-          ${doneTasks.length ? `
-            <div class="divider"></div>
-            <div class="tl-done-title">✅ 已完成</div>
-            <ul class="task-list">${doneTasks.map(taskRow).join('')}</ul>` : ''}
-          <div class="divider"></div>
-          <div class="today-bottom">
-            <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
-              待办 <span class="n">${store.backlog.length}</span> 件 →
-            </button>
-            <button class="cam-btn" data-action="camera:open">
-              <span class="ic">📷</span> <span class="txt">拍照</span>
-            </button>
-          </div>
-        </section>
+
+        <div class="today-bottom">
+          <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
+            📋 待办 <span class="n">${store.backlog.length}</span> 件
+          </button>
+          <button class="icon-btn history-btn" data-action="history:open" title="历史消息" aria-label="历史消息">💬</button>
+          <button class="cam-btn" data-action="camera:open">
+            <span class="ic">📷</span> <span class="txt">拍照</span>
+          </button>
+        </div>
+
+        <div class="end-note">✦ 今天做完这些就够了 ✦</div>
       </div>
       ${window.innerWidth >= 768 ? statsPanel : ''}
     </div>`;

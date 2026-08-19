@@ -65,7 +65,7 @@ const Store = (() => {
     completedLog.push({ id: uid(), text: '读《认知觉醒》第3章', date: d12, doneAt: '', estMin: 30, actualMin: 30, mood: '😐', note: '' });
 
     return {
-      version: 3,
+      version: 4,
       settings: {
         palette: 'lavender', theme: 'system',
         ai: { enabled: false, provider: 'deepseek', apiKey: '', baseUrl: '', model: '' },
@@ -139,7 +139,11 @@ const Store = (() => {
       ],
       corrections: {},
       stats: {},       // { 任务文字: {n, totalMin, avg} } 用于时间预估修正
-      flags: { goalJustDecomposed: null, streakShownDate: null, adjustedShown: {}, skeletonShown: false }
+      flags: {
+        goalJustDecomposed: null, streakShownDate: null, adjustedShown: {}, skeletonShown: false,
+        fragRemind: {},           // { '日期:任务id': 提醒次数 } 碎片建议每日最多2次
+        fragBubbleShownDate: null // 右下角「碎片时间气泡」每日只提示一次
+      }
     };
   }
 
@@ -183,6 +187,8 @@ const Store = (() => {
     if (!data.stats) data.stats = {};
     if (!data.flags) data.flags = { goalJustDecomposed: null, streakShownDate: null, adjustedShown: {}, skeletonShown: false };
     if (data.flags.skeletonShown === undefined) data.flags.skeletonShown = false;
+    if (data.flags.fragRemind === undefined) data.flags.fragRemind = {};
+    if (data.flags.fragBubbleShownDate === undefined) data.flags.fragBubbleShownDate = null;
     // 旧任务补齐时间线字段
     if (data.today && Array.isArray(data.today.tasks)) {
       data.today.tasks.forEach(t => {

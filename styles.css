@@ -164,6 +164,58 @@ html[data-theme="dark"] .task:active{background:rgba(255,255,255,.06)}
 }
 .task .flag{flex:none;font-size:11px;color:var(--ink-2);border:.5px solid var(--line);border-radius:8px;padding:2px 8px}
 .task.done .flag{color:var(--leaf,#7FB97A);border-color:rgba(127,185,122,.4);background:rgba(127,185,122,.08)}
+.task .flag:empty{display:none}
+/* 碎片任务轻标记（待办/今日通用） */
+.bolt{font-size:11px;margin-left:5px;opacity:.75;vertical-align:1px}
+/* 正在进行 */
+.task.doing .check{border-color:var(--aux);box-shadow:0 0 0 3px rgba(212,184,217,.22)}
+.task.doing .flag{color:var(--aux);border-color:rgba(212,184,217,.45);background:rgba(212,184,217,.1)}
+/* 复选框反馈：点击有触感 */
+.check:active{transform:scale(.88)}
+/* 左滑操作按钮（移动端）：默认隐藏，左滑露出 */
+.swipe-acts{
+  position:absolute;top:6px;right:6px;bottom:6px;
+  display:flex;align-items:stretch;gap:6px;
+  transform:translateX(calc(100% + 14px));
+  transition:transform .28s var(--ease);
+}
+.task.swiped{padding-right:10px}
+.task.swiped .swipe-acts{transform:translateX(0)}
+.swipe-acts button{
+  border:0;border-radius:10px;padding:0 12px;
+  font-size:12px;font-weight:600;color:var(--ink-2);
+  background:rgba(0,0,0,.05);cursor:pointer;white-space:nowrap;
+}
+html[data-theme="dark"] .swipe-acts button{background:rgba(255,255,255,.08)}
+.swipe-acts button.danger{color:#E2725B;background:rgba(226,114,91,.1)}
+
+/* ============ 碎片时间 ============ */
+.frag-card{
+  position:relative;border-radius:18px;padding:14px 16px;
+  background:linear-gradient(135deg,rgba(212,184,217,.14),rgba(120,190,165,.12));
+  border:.5px solid var(--line);
+  animation:riseIn .4s var(--ease);
+}
+.frag-head{font-size:13px;font-weight:600;color:var(--ink);margin-bottom:8px}
+.frag-item{
+  display:flex;align-items:center;gap:8px;justify-content:space-between;
+  padding:8px 10px;margin-top:6px;border-radius:13px;
+  background:rgba(255,255,255,.55);
+}
+html[data-theme="dark"] .frag-item{background:rgba(255,255,255,.06)}
+.frag-txt{font-size:14px;color:var(--ink);line-height:1.4}
+.frag-txt small{color:var(--ink-2);margin-left:6px;font-size:11px}
+.frag-acts{flex:none;display:flex;gap:6px}
+.frag-acts .mini-btn{padding:5px 11px;font-size:12px}
+/* 右下角碎片气泡（每日一次） */
+.frag-bubble{
+  position:fixed;right:14px;bottom:calc(86px + env(safe-area-inset-bottom));
+  z-index:60;display:flex;flex-direction:column;align-items:flex-end;gap:8px;
+  animation:riseIn .4s var(--ease);max-width:min(300px,calc(100vw - 40px));
+}
+.frag-bubble .ai-bubble{background:rgba(255,255,255,.8)}
+html[data-theme="dark"] .frag-bubble .ai-bubble{background:rgba(38,34,46,.85)}
+.frag-bubble-close{align-self:flex-end}
 
 /* ============ 今日页 ============ */
 .today-stack{display:flex;flex-direction:column;gap:16px}
@@ -171,9 +223,11 @@ html[data-theme="dark"] .task:active{background:rgba(255,255,255,.06)}
 .ai-hero.right{justify-content:flex-end}
 .ai-avatar{
   flex:none;width:30px;height:30px;border-radius:50%;
-  background:linear-gradient(135deg,var(--primary),var(--accent));
-  display:grid;place-items:center;color:#fff;font-size:13px;font-weight:600;
+  background:url('../icons/mo-avatar.png') center/cover no-repeat, var(--card);
+  display:grid;place-items:center;color:transparent;font-size:0;
   box-shadow:0 2px 10px rgba(0,0,0,.08);
+  border:.5px solid var(--line);
+  overflow:hidden;
 }
 .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
 .stat{background:rgba(255,255,255,.5);border:.5px solid var(--line);border-radius:var(--radius-md);padding:12px 14px}
@@ -264,11 +318,15 @@ html[data-theme="dark"] .goal-progress{background:rgba(255,255,255,.08)}
 }
 .goal-title{font-size:17px;font-weight:600}
 .goal-sub{font-size:13px;color:var(--ink-2);margin-top:4px}
-.goal-dots{display:flex;gap:6px;margin-top:12px}
-.goal-dots .dot{width:9px;height:9px;border-radius:50%;background:rgba(0,0,0,.08)}
-html[data-theme="dark"] .goal-dots .dot{background:rgba(255,255,255,.14)}
-.goal-dots .dot.on{background:var(--accent);box-shadow:0 1px 6px rgba(0,0,0,.15)}
-.goal-dots .dot.on.pulse{animation:pop .5s var(--ease)}
+.goal-dots{display:flex;gap:5px;flex-wrap:wrap;margin-top:12px}
+.goal-dot{width:10px;height:10px;border-radius:50%;border:1.5px solid rgba(0,0,0,.14);background:transparent;transition:all .3s var(--ease)}
+html[data-theme="dark"] .goal-dot{border-color:rgba(255,255,255,.28)}
+.goal-dot.on{background:var(--accent);border-color:var(--accent);box-shadow:0 1px 6px rgba(0,0,0,.15)}
+/* 已达100%但暂不归档：进度条与卡片置灰 */
+.goal-card.done{opacity:.72}
+.goal-card.done .goal-progress .bar{background:rgba(0,0,0,.16)}
+html[data-theme="dark"] .goal-card.done .goal-progress .bar{background:rgba(255,255,255,.2)}
+.goal-kept-tag{display:inline-block;margin-top:6px;font-size:11px;color:var(--ink-2);border:.5px solid var(--line);border-radius:8px;padding:2px 8px}
 .achieve-banner{
   display:flex;align-items:center;gap:12px;
   background:linear-gradient(135deg,var(--primary),var(--aux));
@@ -343,7 +401,7 @@ html[data-theme="dark"] .ai-bubble{
   font-size:12px;color:#8E8E93;
 }
 html[data-theme="dark"] .ai-bubble .who{color:#A6A0AE}
-.ai-bubble .who .dot{width:16px;height:16px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;display:grid;place-items:center;font-size:9px;font-weight:700}
+.ai-bubble .who .dot{width:16px;height:16px;border-radius:50%;background:url('../icons/mo-avatar.png') center/cover no-repeat, linear-gradient(135deg,var(--primary),var(--accent));color:transparent;font-size:0;display:grid;place-items:center;font-weight:700}
 .ai-bubble .who .dot.done{background:var(--leaf,#7FB97A)}
 
 /* Toast 提醒 */
@@ -425,6 +483,71 @@ textarea.input{resize:none;min-height:60px}
 .btn-ghost{background:var(--card);border:.5px solid var(--line);color:var(--ink-2)}
 .btn-danger{background:var(--card);border:.5px solid var(--line);color:#E2725B}
 .btn-primary.btn-full{flex:none;width:100%}
+
+/* ============ 轻量浮层（毛玻璃） ============ */
+.sheet-overlay{
+  position:fixed;inset:0;z-index:75;
+  background:rgba(28,28,30,.18);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  display:grid;place-items:center;padding:20px;animation:fadeIn .25s var(--ease);
+}
+.sheet{
+  width:min(400px,100%);
+  background:rgba(255,255,255,.72);
+  backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);
+  border:1px solid rgba(255,255,255,.65);
+  border-radius:24px;box-shadow:0 18px 50px rgba(60,40,80,.18);
+  padding:22px;animation:modalIn .32s var(--ease);
+}
+html[data-theme="dark"] .sheet{background:rgba(38,34,46,.78);border-color:rgba(255,255,255,.08)}
+.sheet-title{font-size:17px;font-weight:700;line-height:1.45;margin-bottom:6px}
+.sheet-sub{font-size:13px;color:var(--ink-2);line-height:1.6;margin-bottom:16px}
+.sheet-body{display:flex;flex-direction:column;gap:8px;margin:12px 0}
+.ds-row{display:flex;gap:10px;font-size:13px;line-height:1.5}
+.ds-k{flex:none;color:var(--ink-2);font-size:11px;background:rgba(0,0,0,.05);border-radius:7px;padding:2px 8px;align-self:flex-start}
+html[data-theme="dark"] .ds-k{background:rgba(255,255,255,.08)}
+.ds-v{flex:1;color:var(--ink)}
+.sheet-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.sheet-acts button{flex:1;min-width:100px;padding:12px 14px;border-radius:15px;font-size:14px;font-weight:600;transition:transform .2s var(--ease)}
+.sheet-acts button:active{transform:scale(.97)}
+.sheet-acts .btn-danger{flex:none;min-width:auto}
+.confirm-sheet{text-align:left}
+.confirm-sheet .sheet-acts{margin-top:20px}
+
+/* ============ 底部轻提示 + 撤销 ============ */
+#action-toast-root{
+  position:fixed;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom));
+  z-index:86;display:flex;flex-direction:column;gap:8px;align-items:center;
+  pointer-events:none;padding:0 14px;
+}
+.action-toast{
+  pointer-events:auto;
+  display:flex;align-items:center;gap:10px;
+  background:rgba(36,32,44,.88);
+  color:#fff;border-radius:16px;padding:10px 12px 10px 16px;
+  font-size:14px;box-shadow:0 8px 28px rgba(0,0,0,.22);
+  animation:riseIn .3s var(--ease);max-width:min(420px,100%);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+}
+.action-toast.out{opacity:0;transform:translateY(8px);transition:all .3s var(--ease)}
+.action-toast .at-msg{line-height:1.4}
+.action-toast .at-undo{
+  flex:none;border:0;border-radius:12px;padding:7px 14px;
+  background:rgba(255,255,255,.16);color:#fff;font-size:13px;font-weight:600;cursor:pointer;
+}
+.action-toast .at-undo:active{transform:scale(.94)}
+
+/* ============ 长按操作菜单 ============ */
+.menu-list{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.menu-item{
+  display:flex;align-items:center;gap:10px;width:100%;
+  padding:13px 14px;border-radius:14px;border:0;
+  background:var(--card);color:var(--ink);font-size:15px;font-weight:500;
+  cursor:pointer;transition:background .2s;
+}
+.menu-item:active{background:rgba(0,0,0,.05)}
+html[data-theme="dark"] .menu-item:active{background:rgba(255,255,255,.06)}
+.menu-item.danger{color:#E2725B}
 
 /* 目标拆解结果 */
 .milestone{display:flex;gap:10px;margin:14px 0 6px}

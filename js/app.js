@@ -86,6 +86,7 @@ function render() {
   renderHeader();
   renderView();
   renderTabbar();
+  if (App.tab === 'today') maybeFragBubble();
 }
 
 function renderHeader() {
@@ -264,15 +265,16 @@ function renderToday() {
   groups.sort((a, b) => rank(a.key) - rank(b.key));
   if (unslotted.length) groups.unshift({ key: '_todo', label: '待安排', time: '…', hint: '等你确认后，墨会把它们嵌进你的动线', tasks: unslotted });
 
-  // 时间线任务卡片（未完成可拖拽，未确认显示顺路建议）
+  // 时间线任务卡片：点击看详情，复选框标记完成，左滑/长按呼出操作
   const taskRow = (t) => {
     const meta = `${t.estMin}分钟${t.priority ? ' · 🔴 优先任务' : ''}`;
     const sug = !t.done && !t.matched && t.slot && slotByKey[t.slot];
+    const frag = AI.isFragTask(t.text, t.estMin) ? '<span class="bolt" title="适合碎片时间">⚡</span>' : '';
     return `
-      <li class="task ${t.done ? 'done' : ''}${sug ? ' has-sug' : ''}" data-action="${t.done ? 'task:instant' : 'task:toggle'}" data-id="${t.id}" ${t.done ? '' : 'draggable="true" title="拖拽可调整顺序"'}">
-        <span class="check">${t.done ? '🌱' : ''}</span>
+      <li class="task ${t.done ? 'done' : ''}${t.doing ? ' doing' : ''}${sug ? ' has-sug' : ''}" data-action="task:detail" data-id="${t.id}" ${t.done ? '' : 'draggable="true" title="点击查看详情 · 拖拽可调整顺序"'}">
+        <span class="check" data-action="task:check" data-id="${t.id}">${t.done ? '🌱' : ''}</span>
         <div class="task-body">
-          <span class="task-text">${esc(t.text)}</span>
+          <span class="task-text">${esc(t.text)}${frag}</span>
           <span class="task-meta">${meta}${t.why ? ` · ${esc(t.why)}` : ''}</span>
           ${sug ? `
             <div class="route-sug"><span class="sug-tag">🛣 顺路</span><span class="sug-txt">${esc(t.routeNote || slotByKey[t.slot].hint || '')}</span></div>
@@ -281,9 +283,37 @@ function renderToday() {
               <button class="mini-btn" data-action="task:adjust-slot" data-id="${t.id}">🕐 调整</button>
             </div>` : ''}
         </div>
-        <span class="flag">${t.done ? '已完成' : ''}</span>
+        <span class="flag">${t.done ? '已完成' : (t.doing ? '⏳ 进行中' : '')}</span>
+        <div class="swipe-acts">
+          <button data-action="task:edit" data-id="${t.id}">✏️</button>
+          <button data-action="task:to-backlog" data-id="${t.id}">待办</button>
+          <button class="danger" data-action="task:del" data-id="${t.id}">🗑</button>
+        </div>
       </li>`;
   };
+
+  // 碎片建议卡：时间线空白处（骨架空档）自动出现，每日每任务最多提醒 2 次
+  const fragCard = (() => {
+    const st2 = Store.load();
+    const free = AI.currentFreeSlot();
+    if (!free || free.minutes < 5) return '';
+    const today = Store.todayStr();
+    const cands = AI.fragCandidates(st2).filter(c => (st2.flags.fragRemind[`${today}:${c.id}`] || 0) < 2);
+    if (!cands.length) return '';
+    const shown = cands.slice(0, 2);
+    return `
+      <div class="frag-card">
+        <div class="frag-head">⏳ 现在有 ${free.minutes} 分钟空闲，可以：</div>
+        ${shown.map(c => `
+          <div class="frag-item">
+            <span class="frag-txt">⚡ ${esc(c.text)}${c.estMin ? `<small>${c.estMin}分钟</small>` : ''}</span>
+            <span class="frag-acts">
+              <button class="mini-btn ok" data-action="frag:start" data-id="${c.id}" data-from="${c.from}">开始做</button>
+              <button class="mini-btn ghost" data-action="frag:ignore" data-id="${c.id}">忽略</button>
+            </span>
+          </div>`).join('')}
+      </div>`;
+  })();
 
   const hero = aiHero();
 
@@ -353,6 +383,7 @@ function renderToday() {
             <button class="mini-btn ok" data-action="task:accept-all">一键全确认</button>
           </div>` : ''}
           ${backlogHint}
+          ${fragCard}
           <div class="timeline">
             ${groups.map(g => `
               <div class="tl-group" data-slot="${g.key}">
@@ -531,15 +562,23 @@ function renderBacklog() {
     <div class="date-group-label">📅 来自${Store.fmtMD(d)}</div>
     <div class="card" style="padding:10px">
       <ul class="task-list">
-        ${groups[d].map(b => `
-          <li class="task" data-action="backlog:restore" data-id="${b.id}" title="点击排进今日">
+        ${groups[d].map(b => {
+          const frag = AI.isFragTask(b.text, b.estMin) ? '<span class="bolt" title="适合碎片时间">⚡</span>' : '';
+          return `
+          <li class="task" data-action="backlog:detail" data-id="${b.id}" title="点击查看详情 · 左滑或长按可操作">
             <span class="check"></span>
             <div class="task-body">
-              <span class="task-text">${esc(b.text)}${b.priority ? ' <span class="prio-tag">优先</span>' : ''}</span>
+              <span class="task-text">${esc(b.text)}${frag}${b.priority ? ' <span class="prio-tag">优先</span>' : ''}</span>
               <span class="task-meta">${b.estMin}分钟</span>
             </div>
-            <span class="flag" data-action="backlog:delete" data-id="${b.id}" title="长按删除">长按删除</span>
-          </li>`).join('')}
+            <span class="flag"></span>
+            <div class="swipe-acts">
+              <button data-action="backlog:to-today" data-id="${b.id}">今日</button>
+              <button data-action="backlog:edit" data-id="${b.id}">✏️</button>
+              <button class="danger" data-action="backlog:del" data-id="${b.id}">🗑</button>
+            </div>
+          </li>`;
+        }).join('')}
       </ul>
     </div>`).join('') || '<div class="card" style="text-align:center;color:var(--ink-2)">待办是空的，今天的计划都可以在纸上完成。</div>';
 
@@ -549,7 +588,7 @@ function renderBacklog() {
       <div style="font-size:13px;color:var(--ink-2);margin-top:6px">共 ${store.backlog.length} 件待办</div>
       ${remind}
       ${groupHtml}
-      <div class="hint-line">灵感箱：先记下，稍后整理 · 待办：点击 → “今天做”，长按 → 删除</div>
+      <div class="hint-line">点击任务 → 查看详情 · 左滑或长按 → 编辑/移动/删除 · ⚡ 适合碎片时间</div>
     </div>`;
 }
 
@@ -591,9 +630,19 @@ function inboxToBacklog(id) {
 }
 function inboxDel(id) {
   const store = Store.load();
-  store.inbox = store.inbox.filter(x => x.id !== id);
-  Store.save();
-  render();
+  const item = store.inbox.find(x => x.id === id);
+  if (!item) return;
+  confirmDelete(item.text, () => {
+    const st = Store.load();
+    st.inbox = st.inbox.filter(x => x.id !== id);
+    Store.save();
+    render();
+    actionToast('已删除', () => {
+      const st2 = Store.load();
+      st2.inbox.unshift(item);
+      Store.save(); render();
+    });
+  });
 }
 function inboxCopy(id) {
   const store = Store.load();
@@ -641,16 +690,16 @@ function renderGoals() {
     const total = g.tasks.length;
     const pct = total ? Math.round(done / total * 100) : 0;
     const leftDays = Math.ceil((new Date(g.deadline + 'T00:00:00') - new Date()) / 864e5);
-    const dots = [0, 1, 2, 3, 4].map(i => {
-      const filled = done / Math.max(total, 1) * 5 >= i + 0.5;
-      return `<span class="dot ${filled ? 'on' : ''}"></span>`;
-    }).join('');
+    const isKept = pct >= 100 && (store.flags.archivedIds || []).includes(g.id);
+    // 进度灯：每个任务一个灯点，完成 ● 未完成 ○
+    const dots = g.tasks.map(t => `<span class="goal-dot ${t.done ? 'on' : ''}"></span>`).join('');
     const remain = total - done;
     return `
-      <article class="goal-card" data-action="goal:detail" data-id="${g.id}">
+      <article class="goal-card ${isKept ? 'done' : ''}" data-action="goal:detail" data-id="${g.id}">
         <div class="goal-progress"><div class="bar" style="width:${pct}%"></div></div>
         <div class="goal-title">${esc(g.title)}</div>
         <div class="goal-sub">${pct}% · 剩余${Math.max(0, leftDays)}天 · 还有${remain}件任务待完成</div>
+        ${isKept ? '<div class="goal-kept-tag">已达成 · 暂不归档</div>' : ''}
         <div class="goal-dots">${dots}</div>
       </article>`;
   };
@@ -678,7 +727,7 @@ function renderGoals() {
       const title = store.flags.goalJustDecomposed;
       store.flags.goalJustDecomposed = null;
       Store.save();
-      return bubble(msg, 'left');
+      return bubble(msg, 'right');
     }
     return '';
   };
@@ -812,10 +861,10 @@ function renderReview() {
 function bubble(text, align = 'left', id = '') {
   return `
     <div class="ai-hero ${align}">
-      ${align === 'left' ? `<div class="ai-avatar">墨</div>` : ''}
+      ${align === 'left' ? `<div class="ai-avatar" aria-label="墨"></div>` : ''}
       <div class="ai-bubble" ${id ? `id="${id}"` : ''}>
         ${esc(text)}
-        <div class="who"><span class="dot">墨</span>我</div>
+        <div class="who"><span class="dot" aria-hidden="true"></span>我</div>
       </div>
     </div>`;
 }
@@ -832,7 +881,7 @@ function toast(text, opts = {}) {
       <div class="ai-bubble" style="max-width:${opts.wide ? '340px' : '300px'};background:${opts.ai ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.7)'};backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
         <div class="toast-text">${esc(text)}</div>
         ${buttons}
-        <div class="who"><span class="dot">墨</span>我</div>
+        <div class="who"><span class="dot" aria-hidden="true"></span>我</div>
       </div>
     </div>`);
   root.appendChild(t);
@@ -891,6 +940,238 @@ function modalShell(title, sub, body, actions = '') {
       ${actions}
     </div>`;
 }
+
+/* ================= 轻量浮层 / 底部操作条 / 二次确认 ================= */
+
+/* 毛玻璃轻量浮层：点击遮罩外关闭；data-sheet 按钮自动接管 */
+function openSheet(html) {
+  const root = $('#sheet-root');
+  const ov = el(`<div class="sheet-overlay">${html}</div>`);
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  ov.querySelectorAll('[data-sheet]').forEach(b => {
+    b.addEventListener('click', () => { const a = b.dataset.sheet, id = b.dataset.id; ov.remove(); runSheetAction(a, id); });
+  });
+  root.appendChild(ov);
+  return ov;
+}
+
+/* 浮层按钮分发 */
+function runSheetAction(a, id) {
+  switch (a) {
+    case 'task:check': toggleTask(id); break;
+    case 'task:instant': openInstantReview(id); break;
+    case 'task:edit': openTaskEdit(id, 'today'); break;
+    case 'task:del': taskDelToday(id); break;
+    case 'task:to-backlog': taskToBacklog(id); break;
+    case 'backlog:to-today': restoreToToday(id); break;
+    case 'backlog:edit': openTaskEdit(id, 'backlog'); break;
+    case 'backlog:del': doBacklogDelete(id); break;
+    case 'achieve:archive': archiveGoal(id); break;
+    case 'achieve:keep': keepGoal(id); break;
+  }
+}
+
+/* 任务详情浮层：点击任务卡片弹出（毛玻璃，不跳转页面） */
+function openTaskDetail(id, source) {
+  const store = Store.load();
+  const arr = source === 'today' ? store.today.tasks : store.backlog;
+  const t = arr.find(x => x.id === id);
+  if (!t) return;
+  const isToday = source === 'today';
+  const sug = isToday && t.slot ? AI.buildSlots(Store.todayStr()).find(s => s.key === t.slot) : null;
+  const frag = AI.isFragTask(t.text, t.estMin);
+  const rows = `
+    <div class="ds-row"><span class="ds-k">预计</span><span class="ds-v">${t.estMin} 分钟</span></div>
+    ${t.priority ? '<div class="ds-row"><span class="ds-k">标记</span><span class="ds-v">🔴 优先任务</span></div>' : ''}
+    ${frag ? '<div class="ds-row"><span class="ds-k">碎片</span><span class="ds-v">⚡ 适合在空隙里顺手完成</span></div>' : ''}
+    ${sug ? `<div class="ds-row"><span class="ds-k">顺路</span><span class="ds-v">${esc(sug.label)}${t.routeNote ? ` · ${esc(t.routeNote)}` : ''}</span></div>` : ''}
+    ${isToday && t.doing ? '<div class="ds-row"><span class="ds-k">状态</span><span class="ds-v">⏳ 正在进行中</span></div>' : ''}`;
+  const acts = isToday
+    ? (t.done
+      ? `<button class="btn-primary" data-sheet="task:check" data-id="${t.id}">🌱 重新打开</button>
+         <button class="btn-ghost" data-sheet="task:instant" data-id="${t.id}">记录心情</button>`
+      : `<button class="btn-primary" data-sheet="task:check" data-id="${t.id}">✓ 标记完成</button>
+         <button class="btn-ghost" data-sheet="task:edit" data-id="${t.id}">✏️ 编辑</button>
+         <button class="btn-ghost" data-sheet="task:to-backlog" data-id="${t.id}">移到待办</button>
+         <button class="btn-danger" data-sheet="task:del" data-id="${t.id}">删除</button>`)
+    : `<button class="btn-primary" data-sheet="backlog:to-today" data-id="${t.id}">排进今日</button>
+       <button class="btn-ghost" data-sheet="backlog:edit" data-id="${t.id}">✏️ 编辑</button>
+       <button class="btn-danger" data-sheet="backlog:del" data-id="${t.id}">删除</button>`;
+  openSheet(`
+    <div class="sheet">
+      <div class="sheet-title">${esc(t.text)}</div>
+      <div class="sheet-body">${rows}</div>
+      <div class="sheet-acts">${acts}</div>
+    </div>`);
+}
+
+/* 长按/右键操作菜单 */
+function openTaskMenu(id, source) {
+  const store = Store.load();
+  const arr = source === 'today' ? store.today.tasks : store.backlog;
+  const t = arr.find(x => x.id === id);
+  if (!t) return;
+  const isToday = source === 'today';
+  const info = `${t.estMin}分钟${t.priority ? ' · 🔴 优先' : ''}${AI.isFragTask(t.text, t.estMin) ? ' · ⚡ 碎片' : ''}`;
+  openModal(modalShell(
+    esc(t.text), info,
+    `<div class="menu-list">
+      ${isToday
+        ? `<button class="menu-item" data-action="${t.done ? 'task:instant' : 'task:edit'}" data-id="${id}" data-src="today">${t.done ? '📝 记录心情' : '✏️ 编辑任务'}</button>
+           <button class="menu-item" data-action="task:to-backlog" data-id="${id}" data-src="today">↩ 移到待办</button>`
+        : `<button class="menu-item" data-action="backlog:to-today" data-id="${id}">📅 排进今日</button>
+           <button class="menu-item" data-action="backlog:edit" data-id="${id}">✏️ 编辑任务</button>`}
+      <button class="menu-item danger" data-action="${isToday ? 'task:del' : 'backlog:del'}" data-id="${id}">🗑 删除任务</button>
+    </div>`
+  ));
+}
+
+/* 编辑任务弹窗 */
+function openTaskEdit(id, source) {
+  const store = Store.load();
+  const arr = source === 'today' ? store.today.tasks : store.backlog;
+  const t = arr.find(x => x.id === id);
+  if (!t) return;
+  openModal(modalShell(
+    '编辑任务', '修改任务内容与预计用时。',
+    `<input class="input" id="edit-text" value="${esc(t.text)}">
+     <div style="font-size:12px;color:var(--ink-2);margin:10px 2px 6px">预计用时（分钟）</div>
+     <input class="input" type="number" id="edit-min" min="1" max="300" value="${t.estMin || 15}">
+     <div class="chips" style="margin-top:10px">
+       <button class="chip ${t.priority ? 'on' : ''}">🔴 优先任务</button>
+     </div>`,
+    `<div class="modal-actions">
+      <button class="btn-ghost" data-action="modal:close">取消</button>
+      <button class="btn-primary" data-action="edit:save" data-id="${id}" data-src="${source}">保存</button>
+    </div>`
+  ));
+}
+
+/* 保存编辑（支持撤销） */
+function saveTaskEdit(id, source) {
+  const store = Store.load();
+  const arr = source === 'today' ? store.today.tasks : store.backlog;
+  const t = arr.find(x => x.id === id);
+  if (!t) return;
+  const old = { text: t.text, estMin: t.estMin, priority: t.priority };
+  const text = $('#edit-text').value.trim();
+  const min = clamp(Number($('#edit-min').value) || 15, 1, 300);
+  const prio = !!$('#modal-root .chip.on');
+  if (!text) { toast('任务内容不能为空。'); return; }
+  t.text = text; t.estMin = min; t.priority = prio;
+  Store.save();
+  closeModal();
+  render();
+  actionToast('已保存修改', () => {
+    const st = Store.load();
+    const tt = (source === 'today' ? st.today.tasks : st.backlog).find(x => x.id === id);
+    if (tt) { tt.text = old.text; tt.estMin = old.estMin; tt.priority = old.priority; }
+    Store.save(); render();
+  });
+}
+
+/* 删除的二次确认（毛玻璃、语气温和） */
+function confirmDelete(text, onOk) {
+  const ov = openSheet(`
+    <div class="sheet confirm-sheet">
+      <div class="sheet-title">确定要删除“${esc(text)}”吗？</div>
+      <div class="sheet-sub">删掉后就找不回来了，先想清楚哦。</div>
+      <div class="sheet-acts">
+        <button class="btn-ghost sheet-cancel">再想想</button>
+        <button class="btn-danger sheet-ok">删除</button>
+      </div>
+    </div>`);
+  ov.querySelector('.sheet-cancel').addEventListener('click', () => ov.remove());
+  ov.querySelector('.sheet-ok').addEventListener('click', () => { ov.remove(); onOk(); });
+}
+
+/* 底部轻提示 + 撤销（4 秒淡出，给足反应时间） */
+function actionToast(msg, undoFn) {
+  const root = $('#action-toast-root');
+  const t = el(`
+    <div class="action-toast">
+      <span class="at-msg">${esc(msg)}</span>
+      ${typeof undoFn === 'function' ? '<button class="at-undo">撤销</button>' : ''}
+    </div>`);
+  root.appendChild(t);
+  const dismiss = () => { t.classList.add('out'); setTimeout(() => t.remove(), 300); };
+  if (typeof undoFn === 'function') {
+    t.querySelector('.at-undo').addEventListener('click', () => { clearTimeout(t._timer); undoFn(); dismiss(); });
+  }
+  t._timer = setTimeout(dismiss, 4000);
+}
+
+/* ================= 碎片时间 ================= */
+
+/* 碎片任务「开始做」：进入执行状态（doing），可从待办带入今日 */
+function fragStart(id, from) {
+  const store = Store.load();
+  const today = Store.todayStr();
+  const key = `${today}:${id}`;
+  store.flags.fragRemind[key] = (store.flags.fragRemind[key] || 0) + 1;
+  if (from === 'backlog') {
+    const b = store.backlog.find(x => x.id === id);
+    if (!b) return;
+    const nt = { id: Store.uid(), text: b.text, estMin: b.estMin, priority: b.priority, done: false, goalId: null, why: b.why || '', doing: true, slot: '', matched: false, routeNote: '' };
+    store.today.tasks.push(nt);
+    store.backlog = store.backlog.filter(x => x.id !== id);
+    Store.save();
+    render();
+    aiToast('frag_started', { task: b.text });
+    actionToast(`已把"${b.text}"放进今天`, () => {
+      const st = Store.load();
+      st.today.tasks = st.today.tasks.filter(x => x.id !== nt.id);
+      st.backlog.unshift({ id: b.id, text: b.text, estMin: b.estMin, priority: b.priority, originalDate: b.originalDate || today, why: b.why || '' });
+      Store.save(); render();
+    });
+  } else {
+    const t = store.today.tasks.find(x => x.id === id);
+    if (!t) return;
+    t.doing = true;
+    Store.save();
+    render();
+    aiToast('frag_started', { task: t.text });
+    actionToast(`"${t.text}"正在进行中`, () => {
+      const st = Store.load();
+      const tt = st.today.tasks.find(x => x.id === id);
+      if (tt) tt.doing = false;
+      Store.save(); render();
+    });
+  }
+}
+
+/* 碎片任务「忽略」：今天不再提醒 */
+function fragIgnore(id) {
+  const store = Store.load();
+  store.flags.fragRemind[`${Store.todayStr()}:${id}`] = 2;
+  Store.save();
+  render();
+}
+
+function closeFragBubble() {
+  const b = $('.frag-bubble');
+  if (b) b.remove();
+}
+
+/* 右下角气泡：今天碎片时段较多时提示一次，不反复推送 */
+function maybeFragBubble() {
+  if ($('.frag-bubble')) return;
+  const store = Store.load();
+  const today = Store.todayStr();
+  if (store.flags.fragBubbleShownDate === today) return;
+  const n = AI.countFragSlots(today);
+  if (n < 2) return;
+  store.flags.fragBubbleShownDate = today;
+  Store.save();
+  const b = el(`
+    <div class="frag-bubble">
+      <div class="ai-bubble">今天有 ${n} 段碎片时间，可以完成一些小事。<div class="who"><span class="dot" aria-hidden="true"></span>我</div></div>
+      <button class="mini-btn ghost frag-bubble-close" data-action="frag:close">知道了</button>
+    </div>`);
+  $('#bubble-host').appendChild(b);
+}
+
+/* ================= 目标相关 ================= */
 
 /* ================= 目标相关 ================= */
 
@@ -1094,8 +1375,9 @@ function bindEvents() {
   document.addEventListener('touchmove', onTouchMove, { passive: true });
   document.addEventListener('contextmenu', e => {
     const task = e.target.closest('.task');
-    if (task && (task.dataset.action === 'backlog:delete' || task.dataset.action === 'backlog:restore')) {
-      e.preventDefault(); doBacklogDelete(task.dataset.id);
+    if (task && (task.dataset.action === 'task:detail' || task.dataset.action === 'backlog:detail')) {
+      e.preventDefault();
+      openTaskMenu(task.dataset.id, task.dataset.action === 'task:detail' ? 'today' : 'backlog');
     }
   });
 
@@ -1113,7 +1395,7 @@ function bindEvents() {
   // 时间线拖拽排序（桌面端；手机端用"调整"按钮）
   document.addEventListener('dragstart', e => {
     const li = e.target.closest('.task');
-    if (li && li.dataset.action === 'task:toggle' && !li.classList.contains('done')) {
+    if (li && li.dataset.action === 'task:detail' && !li.classList.contains('done')) {
       _dragId = li.dataset.id;
       li.classList.add('dragging');
       if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
@@ -1151,22 +1433,42 @@ function debounce(fn, ms) {
 }
 
 let touchTarget = null;
+let touchStartX = 0;
 function onTouchStart(e) {
   touchTarget = e.target.closest('.task');
+  touchStartX = e.touches ? e.touches[0].clientX : 0;
   if (!touchTarget) return;
+  if (touchTarget.classList.contains('swiped')) return; // 已滑开，先处理按钮
   const act = touchTarget.dataset.action;
-  if (act !== 'task:instant' && act !== 'backlog:restore' && act !== 'backlog:delete') return;
+  if (act !== 'task:detail' && act !== 'backlog:detail' && act !== 'task:instant') return;
   App.longPressTimer = setTimeout(() => {
     const id = touchTarget.dataset.id;
-    if (act === 'task:instant') openInstantReview(id);
-    else doBacklogDelete(id);
+    if (act === 'task:detail' || act === 'backlog:detail') openTaskMenu(id, act === 'task:detail' ? 'today' : 'backlog');
+    else openInstantReview(id);
     navigator.vibrate && navigator.vibrate(15);
   }, 550);
 }
-function onTouchMove() { clearTimeout(App.longPressTimer); }
-function onTouchEnd() { clearTimeout(App.longPressTimer); }
+function onTouchMove(e) {
+  clearTimeout(App.longPressTimer);
+  if (touchTarget) {
+    const dx = e.touches[0].clientX - touchStartX;
+    if (dx < -50) touchTarget.classList.add('swiped');
+    else if (dx > 50) touchTarget.classList.remove('swiped');
+  }
+}
+function onTouchEnd() { clearTimeout(App.longPressTimer); touchTarget = null; }
 
 function onClick(e) {
+  // 点击任务外区域 → 收起所有左滑按钮
+  if (!e.target.closest('.task')) {
+    $$('.task.swiped').forEach(x => x.classList.remove('swiped'));
+  }
+  // 点击已滑开任务的卡片主体 → 先收起，避免误触详情
+  const swTask = e.target.closest('.task.swiped');
+  if (swTask && !e.target.closest('.swipe-acts')) {
+    swTask.classList.remove('swiped');
+    return;
+  }
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
   const act = btn.dataset.action;
@@ -1180,10 +1482,18 @@ function onClick(e) {
     case 'settings:open': openSettings(); break;
     case 'modal:close': closeModal(); break;
     case 'mood:set': setMood(btn.dataset.val); break;
-    case 'task:toggle': toggleTask(id); break;
+    case 'task:check': toggleTask(id); break;
+    case 'task:detail': openTaskDetail(id, 'today'); break;
+    case 'task:edit': openTaskEdit(id, 'today'); break;
+    case 'task:del': taskDelToday(id); break;
+    case 'task:to-backlog': taskToBacklog(id); break;
     case 'task:instant': openInstantReview(id); break;
     case 'end:day': endDay(); break;
     case 'camera:open': openCamera(); break;
+    case 'backlog:detail': openTaskDetail(id, 'backlog'); break;
+    case 'backlog:edit': openTaskEdit(id, 'backlog'); break;
+    case 'backlog:del': doBacklogDelete(id); break;
+    case 'backlog:to-today': restoreToToday(id); break;
     case 'backlog:restore': restoreToToday(id); break;
     case 'backlog:delete': doBacklogDelete(id); break;
     case 'backlog:discard': doBacklogDiscard(id); break;
@@ -1226,6 +1536,10 @@ function onClick(e) {
     case 'inbox:to-backlog': inboxToBacklog(id); break;
     case 'inbox:del': inboxDel(id); break;
     case 'inbox:copy': inboxCopy(id); break;
+    case 'edit:save': saveTaskEdit(id, btn.dataset.src); break;
+    case 'frag:start': fragStart(id, btn.dataset.from); break;
+    case 'frag:ignore': fragIgnore(id); break;
+    case 'frag:close': closeFragBubble(); break;
   }
 }
 
@@ -1256,11 +1570,13 @@ function setMood(m) {
   render();
 }
 
-function toggleTask(id) {
+function toggleTask(id, opts = {}) {
   const store = Store.load();
   const t = store.today.tasks.find(x => x.id === id);
   if (!t) return;
+  const wasDone = t.done;
   t.done = !t.done;
+  t.doing = false;
   if (t.done) {
     store.completedLog.push({ id: Store.uid(), text: t.text, date: Store.todayStr(), doneAt: new Date().toISOString(), estMin: t.estMin, actualMin: t.estMin, mood: '😐', note: '' });
     // 联动目标进度
@@ -1270,17 +1586,29 @@ function toggleTask(id) {
     }
     // 时间预估修正
     adjustEstimate(t);
-    // 提示
     const doneCount = store.today.tasks.filter(x => x.done).length;
     const total = store.today.tasks.length;
     const remaining = total - doneCount;
     Store.save();
-    if (remaining === 0) {
-      setTimeout(() => aiToast('all_done'), 400);
-      if (total >= 5) setTimeout(() => aiToast('over_done', { total }, { wide: true }), 1800);
-    } else if (doneCount === 1 && total >= 4) {
-      setTimeout(() => aiToast('only_one', {}, { wide: true }), 800);
+    if (!opts.silent) {
+      actionToast('已标记为完成', () => toggleTask(id, { silent: true }));
+      if (remaining === 0) {
+        setTimeout(() => aiToast('all_done'), 400);
+        if (total >= 5) setTimeout(() => aiToast('over_done', { total }, { wide: true }), 1800);
+      } else if (doneCount === 1 && total >= 4) {
+        setTimeout(() => aiToast('only_one', {}, { wide: true }), 800);
+      }
     }
+  } else {
+    // 取消完成：移除今日完成记录，目标进度回退
+    const i = store.completedLog.findIndex(e => e.text === t.text && e.date === Store.todayStr());
+    if (i >= 0) store.completedLog.splice(i, 1);
+    if (t.goalId) {
+      const g = store.goals.find(x => x.id === t.goalId);
+      if (g) { const gt = g.tasks.find(x => x.text === t.text && x.done); if (gt) gt.done = false; }
+    }
+    Store.save();
+    if (!opts.silent) actionToast('已取消完成', () => toggleTask(id, { silent: true }));
   }
   render();
 }
@@ -1382,33 +1710,95 @@ function restoreToToday(id) {
   const store = Store.load();
   const b = store.backlog.find(x => x.id === id);
   if (!b) return;
-  store.today.tasks.push({ id: Store.uid(), text: b.text, estMin: b.estMin, priority: b.priority, done: false, goalId: null, why: b.why || '' });
+  const nt = { id: Store.uid(), text: b.text, estMin: b.estMin, priority: b.priority, done: false, goalId: null, why: b.why || '' };
+  store.today.tasks.push(nt);
   store.backlog = store.backlog.filter(x => x.id !== id);
   store.flags.staleShown = false;
   Store.save();
   aiToast('backlog_restored', { task: b.text });
   render();
+  actionToast(`已把"${b.text}"排进今日`, () => {
+    const st = Store.load();
+    st.today.tasks = st.today.tasks.filter(x => x.id !== nt.id);
+    st.backlog.unshift({ id: b.id, text: b.text, estMin: b.estMin, priority: b.priority, originalDate: b.originalDate, why: b.why || '' });
+    Store.save(); render();
+  });
 }
 
 function doBacklogDelete(id) {
   const store = Store.load();
   const b = store.backlog.find(x => x.id === id);
   if (!b) return;
-  store.backlog = store.backlog.filter(x => x.id !== id);
-  Store.save();
-  aiToast('backlog_deleted');
-  render();
+  confirmDelete(b.text, () => {
+    const st = Store.load();
+    const idx = st.backlog.findIndex(x => x.id === id);
+    if (idx < 0) return;
+    const [removed] = st.backlog.splice(idx, 1);
+    Store.save();
+    render();
+    aiToast('backlog_deleted');
+    actionToast(`已删除"${removed.text}"`, () => {
+      const st2 = Store.load();
+      st2.backlog.splice(Math.min(idx, st2.backlog.length), 0, removed);
+      Store.save(); render();
+    });
+  });
 }
 
 function doBacklogDiscard(id) {
   const store = Store.load();
   const b = store.backlog.find(x => x.id === id);
   if (!b) return;
+  const idx = store.backlog.indexOf(b);
   store.backlog = store.backlog.filter(x => x.id !== id);
   store.flags.staleShown = false;
   Store.save();
   aiToast('backlog_deleted');
   render();
+  actionToast(`已把"${b.text}"从提醒中移除`, () => {
+    const st = Store.load();
+    st.backlog.splice(Math.min(idx, st.backlog.length), 0, b);
+    Store.save(); render();
+  });
+}
+
+/* 删除今日任务（二次确认 + 撤销） */
+function taskDelToday(id) {
+  const store = Store.load();
+  const t = store.today.tasks.find(x => x.id === id);
+  if (!t) return;
+  const idx = store.today.tasks.indexOf(t);
+  confirmDelete(t.text, () => {
+    const st = Store.load();
+    const i = st.today.tasks.findIndex(x => x.id === id);
+    if (i < 0) return;
+    const [removed] = st.today.tasks.splice(i, 1);
+    Store.save(); render();
+    actionToast(`已删除"${removed.text}"`, () => {
+      const st2 = Store.load();
+      st2.today.tasks.splice(Math.min(i, st2.today.tasks.length), 0, removed);
+      Store.save(); render();
+    });
+  });
+}
+
+/* 今日任务移回待办（可撤销） */
+function taskToBacklog(id) {
+  const store = Store.load();
+  const t = store.today.tasks.find(x => x.id === id);
+  if (!t) return;
+  const nbId = Store.uid();
+  const snap = { id, text: t.text, estMin: t.estMin, priority: t.priority, done: t.done, goalId: t.goalId || null, why: t.why || '', slot: t.slot || '', matched: t.matched || false, routeNote: t.routeNote || '', doing: false };
+  store.backlog.unshift({ id: nbId, text: t.text, estMin: t.estMin, priority: t.priority, originalDate: Store.todayStr(), why: t.why || '' });
+  store.today.tasks = store.today.tasks.filter(x => x.id !== id);
+  Store.save();
+  render();
+  actionToast(`已把"${t.text}"移回待办`, () => {
+    const st = Store.load();
+    st.backlog = st.backlog.filter(x => x.id !== nbId);
+    st.today.tasks.push({ ...snap });
+    Store.save(); render();
+  });
 }
 
 /* 目标 */
@@ -1442,13 +1832,32 @@ function toggleGoalTask(tid) {
     // 同步今日任务
     const todayTask = store.today.tasks.find(t => t.goalId === g.id && t.text === gt.text);
     if (todayTask) todayTask.done = true;
+  } else {
+    // 取消完成：回退今日完成记录
+    const i = store.completedLog.findIndex(e => e.text === gt.text && e.date === Store.todayStr());
+    if (i >= 0) store.completedLog.splice(i, 1);
+    const todayTask = store.today.tasks.find(t => t.goalId === g.id && t.text === gt.text);
+    if (todayTask) todayTask.done = false;
   }
   Store.save();
   openGoalDetail(g.id);
   const pct = g.tasks.filter(t => t.done).length / g.tasks.length;
-  if (pct === 1) {
-    setTimeout(() => aiToast('goal_done', { title: g.title }), 500);
+  if (pct === 1 && !(store.flags.archivedIds || []).includes(g.id)) {
+    setTimeout(() => openAchieveConfirm(g), 500);
   }
+}
+
+/* 目标达成 100%：自动弹出归档确认（毛玻璃，温和语气） */
+function openAchieveConfirm(g) {
+  openSheet(`
+    <div class="sheet confirm-sheet">
+      <div class="sheet-title">🎯 已达成：${esc(g.title)}。要归档吗？</div>
+      <div class="sheet-sub">归档后目标会移入「已完成」列表，也可以先留在这里。</div>
+      <div class="sheet-acts">
+        <button class="btn-ghost" data-sheet="achieve:keep" data-id="${g.id}">暂不归档</button>
+        <button class="btn-primary" data-sheet="achieve:archive" data-id="${g.id}">归档</button>
+      </div>
+    </div>`);
 }
 
 function archiveGoal(id) {

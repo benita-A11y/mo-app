@@ -1,5 +1,5 @@
 /* 墨 · Service Worker —— 让应用在飞行模式 / 无网络下完整可用 */
-const CACHE_NAME = 'mo-pwa-v4';
+const CACHE_NAME = 'mo-pwa-v6';
 
 /* 需要离线缓存的静态资源（相对站点根目录） */
 const PRECACHE = [
@@ -14,7 +14,8 @@ const PRECACHE = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
-  './icons/apple-touch-icon.png'
+  './icons/apple-touch-icon.png',
+  './icons/mo-avatar.png'
 ];
 
 /* 安装：预缓存全部静态资源 */

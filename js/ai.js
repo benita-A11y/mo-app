@@ -300,9 +300,88 @@ const AI = (() => {
     return slots;
   }
 
+  /* ================= 碎片时间（全局融入，非独立功能） ================= */
+  /** 适合碎片时间完成的任务关键词（AI 自动识别，用户无需手动标记） */
+  const FRAG_KEYWORDS = [
+    '换壁纸', '壁纸', '整理相册', '清理相册', '相册', '清理缓存', '清缓存', '缓存',
+    '回消息', '回微信', '回信息', '回信', '回QQ', '回钉钉', '回邮件', '看消息',
+    '擦桌子', '擦灰', '擦台', '擦鞋', '刷鞋', '叠衣服', '收衣服', '晒衣服',
+    '浇花', '浇水', '养花', '喂猫', '喂狗', '铲猫砂', '遛狗', '给植物',
+    '倒垃圾', '扔垃圾', '丢垃圾', '取快递', '拿快递', '寄快递', '取件', '拿外卖', '取外卖',
+    '倒水', '接水', '烧水', '泡茶', '煮咖啡', '冲咖啡',
+    '剪指甲', '敷面膜', '涂护手霜', '洗手', '洗脸',
+    '收拾桌面', '整理桌面', '收拾书桌', '整理书桌', '整理床头柜', '整理抽屉', '整理杂物', '整理文件', '收纳',
+    '归档', '清理手机', '删照片', '备份', '理账单', '清空回收站', '折叠', '擦玻璃', '拖地'
+  ];
+
+  /**
+   * AI 自动识别碎片任务：关键词命中 + 短时长（≤20分钟或未填）。
+   * 纯规则，保证离线可用；LLM 场景可用 copySmart('frag_*') 生成话术。
+   */
+  function isFragTask(text, estMin) {
+    if (!text) return false;
+    const t = String(text);
+    const hit = FRAG_KEYWORDS.some(k => t.includes(k));
+    if (!hit) return false;
+    return !estMin || Number(estMin) <= 20;
+  }
+
+  /**
+   * 当前是否处于"时间骨架的空档"（课间/午休/提前下课/课后）。
+   * @returns {null | {minutes:number, hint:string}} 空闲分钟数与提示语
+   */
+  function currentFreeSlot(date) {
+    const store = Store.load();
+    const sk = store.settings.skeleton;
+    if (!sk || !sk.enabled) return null;
+    const day = date || Store.todayStr();
+    const dow = DOW_KEYS[new Date(day + 'T00:00:00').getDay()];
+    const segs = (((sk.overrides && sk.overrides[day]) !== undefined) ? sk.overrides[day] : (sk.week && sk.week[dow])) || [];
+    if (!segs.length) return null;
+    const sorted = segs.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+    const tMin = s => { const p = String(s || '0:0').split(':'); return (+p[0] || 0) * 60 + (+p[1] || 0); };
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    let prevEnd = null;
+    for (const seg of sorted) {
+      const st = tMin(seg.start);
+      const en = Math.max(st + 30, tMin(seg.end));
+      if (prevEnd !== null && nowMin >= prevEnd && nowMin < st && st - prevEnd >= 15) {
+        return { minutes: Math.min(st - nowMin, 45), hint: '两段安排之间的空隙' };
+      }
+      if (nowMin >= st && nowMin < en) return null; // 正被固定安排占用
+      prevEnd = Math.max(prevEnd || 0, en);
+    }
+    if (prevEnd !== null && nowMin >= prevEnd && prevEnd <= 18 * 60 && nowMin < 19 * 60) {
+      return { minutes: Math.min(19 * 60 - nowMin, 60), hint: '今天的固定安排已经结束' };
+    }
+    return null;
+  }
+
+  /** 今天可用碎片时段数（骨架启用时顺路槽/空档的数量），用于右下角气泡 */
+  function countFragSlots(date) {
+    const store = Store.load();
+    const sk = store.settings.skeleton;
+    if (!sk || !sk.enabled) return 0;
+    return buildSlots(date || Store.todayStr()).filter(s => s.type === 'route').length;
+  }
+
+  /** 当前可推荐的碎片任务候选：今日未开始 + 待办池（各按新鲜度排序，去重） */
+  function fragCandidates(store) {
+    const today = Store.todayStr();
+    const seen = new Set();
+    const out = [];
+    store.today.tasks.filter(t => !t.done && !t.doing).forEach(t => {
+      if (isFragTask(t.text, t.estMin)) { out.push({ id: t.id, text: t.text, estMin: t.estMin, from: 'today' }); seen.add(t.id); }
+    });
+    store.backlog.slice().reverse().forEach(b => {
+      if (isFragTask(b.text, b.estMin) && !seen.has(b.id)) out.push({ id: b.id, text: b.text, estMin: b.estMin, from: 'backlog' });
+    });
+    return out;
+  }
+
   /** 规则版顺路匹配：根据任务关键词 + 预估时长，推荐最顺手的槽位 */
-  function routeSuggestRule(text, estMin, slots) {
-    const route = slots.filter(s => s.type === 'route');
+  function routeSuggestRule(text, estMin, slots) {    const route = slots.filter(s => s.type === 'route');
     const focus = slots.filter(s => s.type === 'focus');
     const noon = slots.find(s => s.key === 'noon');
     const evening = slots.find(s => s.key === 'evening') || slots.find(s => s.key === 'after');
@@ -480,6 +559,30 @@ c) drop：不值得记录
         return '今天已恢复本周默认的时间骨架。';
       case 'skeleton_onboard':
         return '先定下每周固定被占用的时间，我才能把别的事顺路安排好。';
+      case 'frag_suggest':
+        return `现在有${ctx.min}分钟空闲，可以：${ctx.list}。要开始一件吗？`;
+      case 'frag_started':
+        return `已把"${ctx.task}"放进今天。现在做正好。`;
+      case 'frag_ignored':
+        return '好，这件事今天先放一放。';
+      case 'frag_bubble':
+        return `今天有${ctx.n}段碎片时间，可以完成一些小事。`;
+      case 'frag_bubble_close':
+        return '想做小事时，随时叫我。';
+      case 'task_done':
+        return '已标记为完成。';
+      case 'task_undone':
+        return '已取消完成。';
+      case 'task_restored':
+        return `已把"${ctx.task}"排回今日。`;
+      case 'task_to_backlog':
+        return `已把"${ctx.task}"移回待办，晚点再安排。`;
+      case 'task_edited':
+        return '已保存修改。';
+      case 'task_deleted':
+        return `已删除"${ctx.task}"。`;
+      case 'goal_kept':
+        return '先留在这里，等你觉得合适再归档。';
       default:
         return '';
     }
@@ -523,7 +626,19 @@ c) drop：不值得记录
     skeleton_copied: '用户把某天的时间骨架复制到了其他日期',
     skeleton_override: '用户在今日页单独调整了当天的时间骨架',
     skeleton_reset: '用户恢复了今天的默认骨架',
-    skeleton_onboard: '首次使用，引导用户设置时间骨架'
+    skeleton_onboard: '首次使用，引导用户设置时间骨架',
+    frag_suggest: '时间线出现空闲时段，系统推荐可以顺手完成的碎片任务',
+    frag_started: '用户点击"开始做"，把一个碎片任务放进今天开始执行',
+    frag_ignored: '用户点击"忽略"，放弃本次碎片任务建议',
+    frag_bubble: '系统检测到今天有多段碎片时间，在右下角提示一次',
+    frag_bubble_close: '用户关闭了右下角的碎片时间提示气泡',
+    task_done: '用户通过复选框标记某任务完成',
+    task_undone: '用户取消某任务的完成状态',
+    task_restored: '用户把待办/碎片任务移回今日任务',
+    task_to_backlog: '用户把今日任务移回待办',
+    task_edited: '用户编辑保存了任务内容',
+    task_deleted: '用户删除了一条任务（已二次确认）',
+    goal_kept: '目标已达100%，但用户选择暂不归档'
   };
 
   /**
@@ -698,6 +813,7 @@ c) drop：不值得记录
     goalDecompose, ocrSimulate, copy, copySmart,
     weeklyReport, weeklyNarration, monthlyReport, monthlyNarration,
     suggestTomorrow, tomorrowPlan, userContext,
-    buildSlots, routeSuggest, routeSuggestRule, inboxSuggest, inboxSuggestSmart
+    buildSlots, routeSuggest, routeSuggestRule, inboxSuggest, inboxSuggestSmart,
+    isFragTask, currentFreeSlot, countFragSlots, fragCandidates
   };
 })();

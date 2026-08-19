@@ -127,18 +127,32 @@ function renderTabbar() {
   $$('#tabbar .tab-btn').forEach(b => b.classList.toggle('on', b.dataset.tab === App.tab));
 }
 
+let _lastViewKey = '';
 function renderView() {
   const $v = $('#view');
-  $v.classList.remove('view-enter');
-  void $v.offsetWidth;
+  // 仅 tab 切换时重放入场动画；数据刷新不再强制 reflow，避免点击卡顿
+  const key = App.tab + (App.tab === 'review' ? ':' + App.reviewTab : '');
+  const replay = key !== _lastViewKey;
+  _lastViewKey = key;
+  if (replay) $v.classList.remove('view-enter');
   if (App.tab === 'today') $v.innerHTML = renderToday();
   else if (App.tab === 'goals') $v.innerHTML = renderGoals();
   else if (App.tab === 'backlog') $v.innerHTML = renderBacklog();
   else if (App.tab === 'review') $v.innerHTML = renderReview();
-  $v.classList.add('view-enter');
-  // 异步 AI 个性化（失败自动回退规则版，不影响体验）
-  if (App.tab === 'today') { refreshHero(); refreshTomorrowNote(); refreshTimelineAI(); }
-  else if (App.tab === 'review') refreshReviewAI();
+  if (replay) { void $v.offsetWidth; $v.classList.add('view-enter'); }
+  // 异步 AI 个性化：防抖合并调度，避免每次点击都触发多个网络请求
+  scheduleAIRefresh();
+}
+
+/* AI 个性化刷新：短时间内的多次渲染合并为一次请求，降低响应延迟 */
+let _aiRefreshTimer = null;
+function scheduleAIRefresh() {
+  clearTimeout(_aiRefreshTimer);
+  _aiRefreshTimer = setTimeout(() => {
+    _aiRefreshTimer = null;
+    if (App.tab === 'today') { refreshHero(); refreshTomorrowNote(); refreshTimelineAI(); }
+    else if (App.tab === 'review') refreshReviewAI();
+  }, 400);
 }
 
 /* ================= 今日页 · 时间线 ================= */
@@ -460,7 +474,9 @@ function aiHero() {
 }
 
 /* 用 AI 个性化文案刷新英雄气泡（失败时保留规则版） */
+let _heroBusy = false;
 async function refreshHero() {
+  if (_heroBusy) return;
   const b = $('#hero-bubble');
   if (!b) return;
   const store = Store.load();
@@ -473,54 +489,67 @@ async function refreshHero() {
   let trigger = 'morning';
   if (undone === 0) trigger = 'all_done';
   else if (h >= 18) trigger = 'evening';
-  const smart = await AI.copySmart(trigger, { total: undone, done, priorityCount: prio });
-  if (smart && b.isConnected) {
-    const txt = b.querySelector('.text');
-    if (txt) txt.innerHTML = hlText(smart);
-    else b.innerHTML = hlText(smart);
-  }
+  _heroBusy = true;
+  try {
+    const smart = await AI.copySmart(trigger, { total: undone, done, priorityCount: prio });
+    if (smart && b.isConnected) {
+      const txt = b.querySelector('.text');
+      if (txt) txt.innerHTML = hlText(smart);
+      else b.innerHTML = hlText(smart);
+    }
+  } finally { _heroBusy = false; }
 }
 
 /* 复盘 AI 叙事：LLM 基于真实数据生成周/月报个性化复盘 */
+let _reviewBusy = false;
 async function refreshReviewAI() {
+  if (_reviewBusy) return;
   const store = Store.load();
   const bubbleId = App.reviewTab === 'weekly' ? 'review-week-bubble' : 'review-month-bubble';
-  const narration = App.reviewTab === 'weekly'
-    ? await AI.weeklyNarration(AI.weeklyReport())
-    : await AI.monthlyNarration(AI.monthlyReport());
-  if (!narration) return;
-  // 更新气泡
-  const b = $('#' + bubbleId);
-  if (b && b.isConnected) {
-    const txt = b.querySelector('.text');
-    if (txt) txt.innerHTML = hlText(narration);
-    else b.innerHTML = hlText(narration);
-  }
-  // 填充 AI 复盘卡片
-  const card = $('#ai-insight');
-  if (card && card.isConnected) {
-    card.style.display = '';
-    const body = card.querySelector('.ai-insight-body');
-    if (body) body.innerHTML = esc(narration);
-  }
+  _reviewBusy = true;
+  try {
+    const narration = App.reviewTab === 'weekly'
+      ? await AI.weeklyNarration(AI.weeklyReport())
+      : await AI.monthlyNarration(AI.monthlyReport());
+    if (!narration) return;
+    // 更新气泡
+    const b = $('#' + bubbleId);
+    if (b && b.isConnected) {
+      const txt = b.querySelector('.text');
+      if (txt) txt.innerHTML = hlText(narration);
+      else b.innerHTML = hlText(narration);
+    }
+    // 填充 AI 复盘卡片
+    const card = $('#ai-insight');
+    if (card && card.isConnected) {
+      card.style.display = '';
+      const body = card.querySelector('.ai-insight-body');
+      if (body) body.innerHTML = esc(narration);
+    }
+  } finally { _reviewBusy = false; }
 }
 
 /* 明日方案（LLM 个性化推荐，失败时隐藏该区块） */
+let _noteBusy = false;
 async function refreshTomorrowNote() {
+  if (_noteBusy) return;
   const box = $('#tomorrow-note');
   if (!box) return;
-  const r = await AI.tomorrowPlan();
-  if (!r || !box.isConnected) return;
-  const planHtml = r.plan.map(p => `
+  _noteBusy = true;
+  try {
+    const r = await AI.tomorrowPlan();
+    if (!r || !box.isConnected) return;
+    const planHtml = r.plan.map(p => `
     <div style="display:flex;gap:6px;margin-top:4px">
       <span style="color:var(--leaf,#7FB97A)">🌱</span>
       <span><b style="font-weight:600">${esc(p.text)}</b> ${p.why ? `<span style="color:var(--ink-2)">· ${esc(p.why)}</span>` : ''}</span>
     </div>`).join('');
-  box.innerHTML = `
+    box.innerHTML = `
     <div style="padding:10px 12px;background:var(--card);border-radius:16px;border:.5px solid var(--line)">
       ${r.note ? `<div style="font-size:13px;line-height:1.7;color:var(--ink);margin-bottom:6px">${esc(r.note)}</div>` : ''}
       ${planHtml}
     </div>`;
+  } finally { _noteBusy = false; }
 }
 
 function calcStreak() {
@@ -1527,7 +1556,8 @@ function onTouchEnd() {
 function onClick(e) {
   // 点击任务外区域 → 收起所有左滑按钮
   if (!e.target.closest('.task')) {
-    $$('.task.swiped').forEach(x => x.classList.remove('swiped'));
+    const sw = $('.task.swiped');
+    if (sw) sw.classList.remove('swiped');
   }
   // 点击已滑开任务的卡片主体 → 先收起，避免误触详情
   const swTask = e.target.closest('.task.swiped');

@@ -561,7 +561,7 @@ html[data-theme="dark"] .inbox-item{background:rgba(255,255,255,.05)}
 .inbox-acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .inbox-empty{font-size:13px;color:var(--ink-2);text-align:center;padding:14px 0 6px}
 
-/* ============ 课表编辑 ============ */
+/* ============ 时间骨架编辑 ============ */
 .week-editor{display:flex;flex-direction:column;gap:6px;margin-top:10px}
 .week-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .week-row .day{font-size:13px;font-weight:600}
@@ -570,9 +570,13 @@ html[data-theme="dark"] .inbox-item{background:rgba(255,255,255,.05)}
   border:none;border-radius:10px;padding:6px 14px;cursor:pointer;
 }
 .week-edit:active{transform:scale(.95)}
+.skeleton-tools{display:flex;gap:8px;margin:10px 0 4px;flex-wrap:wrap}
+.skeleton-tools .mini-btn{flex:1;min-width:110px}
+.copy-box{margin-top:2px}
+.copy-targets .chips{margin:8px 0 2px}
 .sched-editor{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 .srow{
-  display:grid;grid-template-columns:1fr 1fr 1.4fr 1.2fr auto;
+  display:grid;grid-template-columns:1fr 1fr 1.6fr auto;
   gap:6px;align-items:center;
 }
 .srow .input{padding:7px 9px;font-size:12px;margin:0}
@@ -641,7 +645,6 @@ html[data-theme="dark"] .inbox-item{background:rgba(255,255,255,.05)}
   .decomp-task .d-date{white-space:nowrap}
   .srow{grid-template-columns:1fr 1fr}
   .srow .s-name{grid-column:1 / 3}
-  .srow .s-place{grid-column:1 / 3}
   .slot-grid{grid-template-columns:1fr}
 }
 

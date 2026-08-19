@@ -86,7 +86,6 @@ function render() {
   renderHeader();
   renderView();
   renderTabbar();
-  if (App.tab === 'today') maybeFragBubble();
 }
 
 function renderHeader() {
@@ -96,9 +95,6 @@ function renderHeader() {
   if (App.tab === 'today') {
     const h = new Date().getHours();
     const greet = h < 11 ? '早安，今天。' : h < 18 ? '下午好，今天。' : '晚上好，今天。';
-    const moodBtns = ['😊', '😐', '😔'].map(m =>
-      `<button class="mood ${store.today.status === m ? 'on' : ''}" data-action="mood:set" data-val="${m}" title="${App.moodLabels[m]}">${m}</button>`
-    ).join('');
     $h.innerHTML = `
       <div class="header-inner">
         <div>
@@ -106,8 +102,7 @@ function renderHeader() {
           <div class="greet-date">${Store.fmtMD(today)} · ${Store.fmtDOW(today)}</div>
         </div>
         <div class="header-tools">
-          <div class="mood-picker"><span class="mood-label">状态</span>${moodBtns}</div>
-          <button class="text-btn" data-action="end:day">结束</button>
+          <button class="mood-single" data-action="mood:open" title="点我签到今日状态">${store.today.status || '😊'}</button>
           <button class="icon-btn" data-action="settings:open" title="设置" aria-label="设置">${settingsIcon()}</button>
         </div>
       </div>`;
@@ -307,7 +302,7 @@ function renderToday() {
         <span class="flag">${t.done ? '已完成' : (t.doing ? '⏳ 进行中' : '')}</span>
         <div class="swipe-acts">
           <button data-action="task:edit" data-id="${t.id}">编辑</button>
-          <button data-action="task:to-backlog" data-id="${t.id}">待办</button>
+          <button data-action="task:to-backlog" data-id="${t.id}">移动</button>
           <button class="danger" data-action="task:del" data-id="${t.id}">删除</button>
         </div>
       </li>`;
@@ -392,11 +387,6 @@ function renderToday() {
     <div class="today-stack">
       ${hero}
 
-        <div class="task-bar">
-          <div class="stats"><strong>${undone.length}件</strong> · 预计 ${totalMin} 分钟</div>
-          ${todaySkelBtn}
-        </div>
-
         ${pendingCount ? `
         <div class="confirm-all">
           <span class="label">🛣 墨已把任务放进你的动线</span>
@@ -405,6 +395,11 @@ function renderToday() {
 
         ${backlogHint}
         ${fragCard}
+
+        <div class="task-bar task-bar-tl">
+          <div class="stats"><strong>${undone.length}件</strong> · 预计 ${totalMin} 分钟</div>
+          ${todaySkelBtn}
+        </div>
 
         <div class="timeline">
           ${groups.map(g => `
@@ -577,7 +572,7 @@ function renderBacklog() {
           <button class="mini-btn ghost" data-action="inbox:del" data-id="${item.id}">删除</button>
         </div>
       </div>`;
-  }).join('') : '<div class="inbox-empty">这里先“接住”你冒出来的想法，等你有空再整理。</div>';
+  }).join('') : '<div class="inbox-empty">先记下来，稍后整理。</div>';
 
   const inboxCard = `
     <section class="card inbox-card">
@@ -620,8 +615,8 @@ function renderBacklog() {
             </div>
             <span class="flag"></span>
             <div class="swipe-acts">
-              <button data-action="backlog:to-today" data-id="${b.id}">移动</button>
               <button data-action="backlog:edit" data-id="${b.id}">编辑</button>
+              <button data-action="backlog:to-today" data-id="${b.id}">移动</button>
               <button class="danger" data-action="backlog:del" data-id="${b.id}">删除</button>
             </div>
           </li>`;
@@ -632,10 +627,8 @@ function renderBacklog() {
   return `
     <div class="page-stack backlog-page">
       ${inboxCard}
-      <div style="font-size:12px;color:var(--ink-2);margin-top:4px">共 ${store.backlog.length} 件待办</div>
       ${remind}
       ${groupHtml}
-      <div class="hint-line">点击任务 → 查看详情 · 左滑或长按 → 编辑/移动/删除 · ⚡ 适合碎片时间</div>
       <div class="end-line">—— 没有更多了 ——</div>
       <button class="fab" data-action="inbox:focus" title="添加想法" aria-label="添加想法">＋</button>
     </div>`;
@@ -924,7 +917,7 @@ function bubble(text, align = 'left', id = '') {
       ${align === 'left' ? `<div class="ai-avatar" aria-label="墨"></div>` : ''}
       <div class="ai-bubble" ${id ? `id="${id}"` : ''}>
         <div class="text">${hlText(text)}</div>
-        <div class="who"><span class="dot" aria-hidden="true"></span>—— 我</div>
+        <div class="who"><span class="dot" aria-hidden="true"></span>我</div>
       </div>
     </div>`;
 }
@@ -941,7 +934,7 @@ function toast(text, opts = {}) {
       <div class="ai-bubble" style="max-width:${opts.wide ? '340px' : '300px'};background:${opts.ai ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.7)'};backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
         <div class="toast-text">${hlText(text)}</div>
         ${buttons}
-        <div class="who"><span class="dot" aria-hidden="true"></span>—— 我</div>
+        <div class="who"><span class="dot" aria-hidden="true"></span>我</div>
       </div>
     </div>`);
   root.appendChild(t);
@@ -1208,31 +1201,6 @@ function fragIgnore(id) {
   Store.save();
   render();
 }
-
-function closeFragBubble() {
-  const b = $('.frag-bubble');
-  if (b) b.remove();
-}
-
-/* 右下角气泡：今天碎片时段较多时提示一次，不反复推送 */
-function maybeFragBubble() {
-  if ($('.frag-bubble')) return;
-  const store = Store.load();
-  const today = Store.todayStr();
-  if (store.flags.fragBubbleShownDate === today) return;
-  const n = AI.countFragSlots(today);
-  if (n < 2) return;
-  store.flags.fragBubbleShownDate = today;
-  Store.save();
-  const b = el(`
-    <div class="frag-bubble">
-      <div class="ai-bubble"><div class="text">今天有 ${n} 段碎片时间，可以完成一些小事。</div><div class="who"><span class="dot" aria-hidden="true"></span>—— 我</div></div>
-      <button class="mini-btn ghost frag-bubble-close" data-action="frag:close">知道了</button>
-    </div>`);
-  $('#bubble-host').appendChild(b);
-}
-
-/* ================= 目标相关 ================= */
 
 /* ================= 目标相关 ================= */
 
@@ -1584,6 +1552,7 @@ function onClick(e) {
     case 'tab:switch': App.tab = btn.dataset.tab; render(); break;
     case 'settings:open': openSettings(); break;
     case 'modal:close': closeModal(); break;
+    case 'mood:open': openMoodPicker(); break;
     case 'mood:set': setMood(btn.dataset.val); break;
     case 'task:check': toggleTask(id); break;
     case 'task:detail': openTaskDetail(id, 'today'); break;
@@ -1591,7 +1560,6 @@ function onClick(e) {
     case 'task:del': taskDelToday(id); break;
     case 'task:to-backlog': taskToBacklog(id); break;
     case 'task:instant': openInstantReview(id); break;
-    case 'end:day': endDay(); break;
     case 'camera:open': openCamera(); break;
     case 'backlog:detail': openTaskDetail(id, 'backlog'); break;
     case 'backlog:edit': openTaskEdit(id, 'backlog'); break;
@@ -1642,7 +1610,6 @@ function onClick(e) {
     case 'edit:save': saveTaskEdit(id, btn.dataset.src); break;
     case 'frag:start': fragStart(id, btn.dataset.from); break;
     case 'frag:ignore': fragIgnore(id); break;
-    case 'frag:close': closeFragBubble(); break;
   }
 }
 
@@ -1653,11 +1620,32 @@ function getSelectedDays() {
 
 /* ================= 动作实现 ================= */
 
+/* 状态签到：单个表情按钮点击后弹出三个选项供选择 */
+function openMoodPicker() {
+  const store = Store.load();
+  const cur = store.today.status || '😊';
+  const items = Object.entries(App.moodLabels).map(([m, label]) => `
+    <button class="mood-opt ${cur === m ? 'on' : ''}" data-action="mood:set" data-val="${m}">
+      <span class="mo-emoji">${m}</span>
+      <span class="mo-label">${label}</span>
+      <span class="mo-check">${cur === m ? '✓' : ''}</span>
+    </button>`).join('');
+  openSheet(`
+    <div class="sheet mood-sheet">
+      <div class="sheet-title">今天状态怎么样？</div>
+      <div class="sheet-sub">如实记录，墨会据此调整节奏</div>
+      <div class="mood-opts">${items}</div>
+    </div>`);
+}
+
 function setMood(m) {
   const store = Store.load();
-  store.today.status = store.today.status === m ? null : m;
+  const prev = store.today.status;
+  store.today.status = m;
   Store.save();
-  if (m === '😔' && store.today.status === '😔') {
+  const ov = $('.sheet-overlay');
+  if (ov) ov.remove();
+  if (m === '😔' && prev !== '😔') {
     // 移1件到待办
     const undone = store.today.tasks.filter(t => !t.done);
     if (undone.length > 1) {
@@ -1776,37 +1764,6 @@ function saveReview() {
   Store.save();
   closeModal();
   aiToast('review_saved', {}, { fallback: '记录好了。完成本身就是意义。' });
-}
-
-function endDay() {
-  const store = Store.load();
-  const view = $('#view');
-  view.classList.add('ending');
-  setTimeout(() => {
-    // 记录今天的完成数据
-    const doneCount = store.completedLog.filter(e => e.date === Store.todayStr()).length;
-    store.dayLog[store.todayDate] = { done: doneCount, planned: store.today.tasks.length, mood: store.today.status || '😐' };
-    // 未完成 → 待办
-    store.today.tasks.filter(t => !t.done).forEach(t => {
-      store.backlog.unshift({ id: Store.uid(), text: t.text, estMin: t.estMin, priority: t.priority, originalDate: store.todayDate, why: t.why || '' });
-    });
-    // 显示结束动画
-    const ov = el(`
-      <div class="day-end-overlay">
-        <div class="txt">今日已完成。明天见。${doneCount > 0 ? `<div class="sub">今天你为自己做了 ${doneCount} 件事</div>` : ''}</div>
-      </div>`);
-    document.body.appendChild(ov);
-    Store.save();
-    setTimeout(() => {
-      ov.remove();
-      store.todayDate = Store.shiftDate(store.todayDate, 1);
-      store.today = { status: null, tasks: assembleDay(store.todayDate) };
-      Store.save();
-      view.classList.remove('ending');
-      render();
-      setTimeout(() => aiToast('morning', { total: store.today.tasks.length, priorityCount: 0 }), 500);
-    }, 1900);
-  }, 700);
 }
 
 function restoreToToday(id) {

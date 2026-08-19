@@ -223,7 +223,7 @@ html[data-theme="dark"] .frag-bubble .ai-bubble{background:rgba(38,34,46,.85)}
 .ai-hero.right{justify-content:flex-end}
 .ai-avatar{
   flex:none;width:30px;height:30px;border-radius:50%;
-  background:url('../icons/mo-avatar.png') center/cover no-repeat, var(--card);
+  background:url('icons/mo-avatar.png') center/cover no-repeat, var(--card);
   display:grid;place-items:center;color:transparent;font-size:0;
   box-shadow:0 2px 10px rgba(0,0,0,.08);
   border:.5px solid var(--line);
@@ -401,7 +401,7 @@ html[data-theme="dark"] .ai-bubble{
   font-size:12px;color:#8E8E93;
 }
 html[data-theme="dark"] .ai-bubble .who{color:#A6A0AE}
-.ai-bubble .who .dot{width:16px;height:16px;border-radius:50%;background:url('../icons/mo-avatar.png') center/cover no-repeat, linear-gradient(135deg,var(--primary),var(--accent));color:transparent;font-size:0;display:grid;place-items:center;font-weight:700}
+.ai-bubble .who .dot{width:16px;height:16px;border-radius:50%;background:url('icons/mo-avatar.png') center/cover no-repeat, linear-gradient(135deg,var(--primary),var(--accent));color:transparent;font-size:0;display:grid;place-items:center;font-weight:700}
 .ai-bubble .who .dot.done{background:var(--leaf,#7FB97A)}
 
 /* Toast 提醒 */

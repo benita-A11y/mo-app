@@ -243,7 +243,7 @@ const AI = (() => {
     return { lines };
   }
 
-  /* ================= 动线系统：课表 → 时间槽 → 顺路推荐 ================= */
+  /* ================= 动线系统：时间骨架 → 时间槽 → 顺路推荐 ================= */
   const DOW_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
   const DEFAULT_SLOTS = [
     { key: 'early', label: '🌅 清晨', time: '07:30', type: 'focus', hint: '安静的自我时间' },
@@ -255,29 +255,47 @@ const AI = (() => {
     { key: 'sleep', label: '🛌 睡前', time: '21:40', type: 'focus', hint: '轻量收尾' }
   ];
 
-  /** 根据日期 + 课表生成当天可用的时间槽（含课程空档的"顺路"槽位） */
+  /**
+   * 根据日期 + 时间骨架生成当天可用的时间槽。
+   * 骨架段 = 固定被占用（lesson，不可安排）；段间空档 / 午休 / 课后 = 顺路槽（route）。
+   * 单日覆盖（overrides[date]）优先于每周默认骨架。
+   */
   function buildSlots(date) {
     const store = Store.load();
-    const sched = store.settings.schedule;
-    if (!sched || !sched.enabled) return DEFAULT_SLOTS.map(s => ({ ...s }));
+    const sk = store.settings.skeleton;
+    if (!sk || !sk.enabled) return DEFAULT_SLOTS.map(s => ({ ...s }));
     const dow = DOW_KEYS[new Date(date + 'T00:00:00').getDay()];
-    const lessons = ((sched.week && sched.week[dow]) || []).slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
-    if (!lessons.length) return DEFAULT_SLOTS.map(s => ({ ...s }));
+    const segs = (((sk.overrides && sk.overrides[date]) !== undefined) ? sk.overrides[date] : (sk.week && sk.week[dow])) || [];
+    if (!segs.length) return DEFAULT_SLOTS.map(s => ({ ...s }));
+    const sorted = segs.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+    const tMin = s => { const p = String(s || '0:0').split(':'); return (+p[0] || 0) * 60 + (+p[1] || 0); };
+    const fmt = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+    const isMeal = t => /午休|午饭|午餐|吃饭|外卖|取餐|用餐/.test(t || '');
+    const isClass = t => /课|上课|自习|教室/.test(t || '');
+    const isWork = t => /工作|上班|会议|加班/.test(t || '');
     const slots = [];
-    slots.push({ key: 'early', label: '🌅 课前', time: '07:30', type: 'focus', hint: '上课前，安静的自我时间' });
-    lessons.forEach((l, i) => {
-      if (i > 0) {
-        const prev = lessons[i - 1];
-        slots.push({
-          key: 'gap' + i, label: '🕐 课间' + i, time: prev.end || '10:00',
-          type: 'route', hint: '两节课之间，顺路办事'
-        });
+    if (tMin(sorted[0].start) > 8 * 60) {
+      slots.push({ key: 'early', label: '🌅 清晨', time: '07:30', type: 'focus', hint: '第一个固定安排之前，安静的自我时间' });
+    }
+    let prevEnd = null;
+    sorted.forEach((seg, i) => {
+      const st = tMin(seg.start);
+      const en = Math.max(st + 30, tMin(seg.end));
+      if (prevEnd !== null && st - prevEnd >= 15) {
+        slots.push({ key: 'gap' + i, label: '🕐 空档', time: fmt(prevEnd), type: 'route', hint: '两段安排之间的空隙，顺路办事' });
       }
-      slots.push({ key: 'lesson' + i, label: '📚 ' + (l.name || '上课'), time: l.start || '', type: 'lesson', lesson: l, hint: '' });
+      if (isMeal(seg.tag)) {
+        const key = (st >= 11 * 60 && st <= 14 * 60) ? 'noon' : 'gapM' + i;
+        slots.push({ key, label: '🍚 ' + (seg.tag || '休息'), time: seg.start, type: 'route', hint: '吃饭出门，顺路办事' });
+      } else {
+        const ic = isClass(seg.tag) ? '📚' : (isWork(seg.tag) ? '💼' : '⏳');
+        slots.push({ key: 'seg' + i, label: ic + ' ' + (seg.tag || '已占用'), time: seg.start, type: 'lesson', seg, hint: '' });
+      }
+      prevEnd = Math.max(prevEnd || 0, en);
     });
-    slots.push({ key: 'noon', label: '🍚 午间', time: '12:10', type: 'route', hint: '吃饭出门，顺路办事' });
-    slots.push({ key: 'after', label: '🌙 课后', time: '17:30', type: 'route', hint: '下课后路上顺路' });
-    slots.push({ key: 'night', label: '🌃 晚间', time: '19:30', type: 'focus', hint: '一天里最安静的一段' });
+    const lastEnd = prevEnd;
+    if (lastEnd <= 18 * 60) slots.push({ key: 'after', label: '🌙 课后/下班后', time: fmt(lastEnd), type: 'route', hint: '一天安排结束后，顺路收个尾' });
+    if (lastEnd < 19 * 60) slots.push({ key: 'night', label: '🌃 晚间', time: '19:30', type: 'focus', hint: '一天里最安静的一段' });
     slots.push({ key: 'sleep', label: '🛌 睡前', time: '21:40', type: 'focus', hint: '轻量收尾' });
     return slots;
   }
@@ -321,14 +339,14 @@ const AI = (() => {
     if (!base.length) return base;
     if (!canCallLLM()) return base;
     const store = Store.load();
-    const sched = store.settings.schedule;
+    const sk = store.settings.skeleton;
     const dow = DOW_KEYS[new Date(date + 'T00:00:00').getDay()];
-    const lessons = sched && sched.enabled && sched.week ? sched.week[dow] || [] : [];
+    const segs = sk && sk.enabled ? (((sk.overrides && sk.overrides[date]) !== undefined) ? sk.overrides[date] : (sk.week && sk.week[dow])) || [] : [];
     const gapInfo = slots.filter(s => s.type !== 'lesson')
       .map(s => `${s.key}(${s.label} ${s.time} ${s.hint})`).join('；');
-    const prompt = `今天是 ${Store.fmtDOW(date)}（${date}），课表：${lessons.length ? lessons.map(l => `${l.start}-${l.end} ${l.name}`).join('、') : '无课'}。可安排的空档槽位：${gapInfo}。
+    const prompt = `今天是 ${Store.fmtDOW(date)}（${date}），时间骨架（固定被占用）：${segs.length ? segs.map(l => `${l.start}-${l.end} ${l.tag}`).join('、') : '无固定安排'}。可安排任务的空档槽位：${gapInfo}。
 待安排任务：${JSON.stringify(base.map(b => ({ id: b.taskId, text: b.text, estMin: b.estMin })))}。
-请为每个任务选择最合适的空档槽位，原则：顺路优先（能在课间/午间/课后路上顺手完成的绝不让用户多走一步）、兼顾专注型任务（学习类放安静时段）、减少多余动作。规则建议仅供参考，可优化。
+请为每个任务选择最合适的空档槽位，原则：顺路优先（能在空档/午间/课后路上顺手完成的绝不让用户多走一步）、避开骨架中被占用的时间、兼顾专注型任务（学习类放安静时段）、减少多余动作。规则建议仅供参考，可优化。
 严格输出 JSON 数组：[{"taskId":"…","slot":"…","reason":"≤20字"}]，slot 必须是上面列出的 key 之一，不要输出任何其他文字。`;
     const r = await LLM.chat([
       { role: 'system', content: PERSONA + '你擅长把任务自然地嵌进用户每天的行程，让事情顺路发生。只输出 JSON。' },
@@ -448,8 +466,20 @@ c) drop：不值得记录
         return `已把"${ctx.task}"排进${ctx.slot}${ctx.reason ? '：' + ctx.reason : ''}。`;
       case 'inbox_backlog':
         return `已把"${ctx.task}"放进待办，晚点再安排。`;
-      case 'schedule_saved':
-        return '课表已更新。之后我会把顺路的事嵌进课间和午间。';
+      case 'skeleton_saved':
+        return `时间骨架已更新。我会避开你忙碌的时段，把顺路的事嵌进空档。`;
+      case 'skeleton_off':
+        return '已关闭时间骨架，改用默认时段安排。';
+      case 'skeleton_templated':
+        return `已按「${ctx.tpl || ''}」搭好周一至周五的时间骨架，你可以微调。`;
+      case 'skeleton_copied':
+        return '已复制到所选日期。';
+      case 'skeleton_override':
+        return '今天的时间骨架已单独调整，其他日期不受影响。';
+      case 'skeleton_reset':
+        return '今天已恢复本周默认的时间骨架。';
+      case 'skeleton_onboard':
+        return '先定下每周固定被占用的时间，我才能把别的事顺路安排好。';
       default:
         return '';
     }
@@ -487,7 +517,13 @@ c) drop：不值得记录
     inbox_captured: '用户往灵感箱记了一条想法，等待整理',
     inbox_today: '一条灵感被排进今日任务并匹配了时间槽',
     inbox_backlog: '一条灵感被移入待办',
-    schedule_saved: '用户保存了新的课表'
+    skeleton_saved: '用户保存了新的时间骨架（每周固定被占用的时间段）',
+    skeleton_off: '用户关闭了时间骨架匹配',
+    skeleton_templated: '用户套用了时间骨架模板（上班族/学生）',
+    skeleton_copied: '用户把某天的时间骨架复制到了其他日期',
+    skeleton_override: '用户在今日页单独调整了当天的时间骨架',
+    skeleton_reset: '用户恢复了今天的默认骨架',
+    skeleton_onboard: '首次使用，引导用户设置时间骨架'
   };
 
   /**

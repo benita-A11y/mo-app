@@ -29,6 +29,7 @@ function init() {
   rolloverIfNewDay();
   bindEvents();
   render();
+  maybeOnboardSkeleton();
 }
 
 /* ================= 日期切换：未完成任务顺延到待办 ================= */
@@ -326,6 +327,16 @@ function renderToday() {
 
   const pendingCount = undone.filter(t => !t.matched).length;
 
+  // 「今日微调」入口：时间骨架启用且今天有固定安排时，低调出现在标题右侧
+  const skn = store.settings.skeleton;
+  const dowKey = DOW_KEYS[new Date(Store.todayStr() + 'T00:00:00').getDay()];
+  const todaySegs = skn && skn.enabled
+    ? (((skn.overrides && skn.overrides[Store.todayStr()]) !== undefined) ? skn.overrides[Store.todayStr()] : (skn.week[dowKey] || []))
+    : [];
+  const todaySkelBtn = skn && skn.enabled && todaySegs.length
+    ? `<button class="mini-btn ghost" data-action="skeleton:today" style="margin-left:auto">今日微调</button>`
+    : '';
+
   return `
     <div class="today-grid">
       <div class="today-stack">
@@ -334,6 +345,7 @@ function renderToday() {
           <div class="card-title">
             <span class="t">时间线</span>
             <span class="meta">${undone.length}件 · 预计${totalMin}分钟</span>
+            ${todaySkelBtn}
           </div>
           ${pendingCount ? `
           <div class="timeline-toolbar">
@@ -1160,6 +1172,9 @@ function onClick(e) {
   const act = btn.dataset.action;
   const id = btn.dataset.id;
 
+  // 时间骨架「复制到其他日期」的目标日期多选
+  if (btn.classList.contains('chip')) { btn.classList.toggle('on'); return; }
+
   switch (act) {
     case 'tab:switch': App.tab = btn.dataset.tab; render(); break;
     case 'settings:open': openSettings(); break;
@@ -1192,10 +1207,17 @@ function onClick(e) {
     case 'settings:theme': setTheme(btn.dataset.val); break;
     case 'settings:reset': resetAll(); break;
     case 'settings:ai-test': testAi(); break;
-    case 'schedule:edit': openScheduleDay(btn.dataset.day); break;
-    case 'schedule:add': addScheduleRow(); break;
-    case 'schedule:del': delScheduleRow(btn.dataset.idx); break;
-    case 'schedule:save': saveScheduleDay(btn.dataset.day); break;
+    case 'skeleton:edit': openSkeletonDay(btn.dataset.day); break;
+    case 'skeleton:add': addSkeletonRow(); break;
+    case 'skeleton:del': delSkeletonRow(Number(btn.dataset.idx)); break;
+    case 'skeleton:save': saveSkeletonDay(btn.dataset.day); break;
+    case 'skeleton:template': applyTemplate(btn.dataset.tpl); break;
+    case 'skeleton:today': openSkeletonDay('today'); break;
+    case 'skeleton:reset-today': resetTodaySkeleton(); break;
+    case 'skeleton:copy-toggle': toggleCopyTargets(); break;
+    case 'skeleton:copy-do': copySkeletonToDays(); break;
+    case 'skeleton:onboard': onboardSkeleton(btn.dataset.tpl); break;
+    case 'skeleton:onboard-skip': onboardSkip(); break;
     case 'task:accept-route': acceptRoute(id); break;
     case 'task:accept-all': acceptAllRoutes(); break;
     case 'task:adjust-slot': adjustSlot(id); break;
@@ -1526,14 +1548,18 @@ function openSettings() {
     <input class="input" data-ai="baseUrl" placeholder="Base URL（留空用服务商默认）" value="${esc(ai.baseUrl || '')}" style="margin-top:8px">
 
     <div class="setting-row" style="margin-top:14px">
-      <div><div class="sl">📚 课表</div><div class="sd">输入课表后，墨会把顺路的事嵌进课间、午间等空档，让你出门顺手就办完。</div></div>
+      <div><div class="sl">🗓 我的时间骨架</div><div class="sd">先定下每周固定被占用的时间（上课、工作、午休…），墨就会避开它们，把顺路的事嵌进空档。设置一次，长期生效。</div></div>
     </div>
-    <label class="ai-toggle"><input type="checkbox" data-sched="enabled" ${store.settings.schedule.enabled ? 'checked' : ''}> 启用课表匹配动线</label>
+    <div class="skeleton-tools">
+      <button class="mini-btn" data-action="skeleton:template" data-tpl="work">🧑‍💻 全职工作</button>
+      <button class="mini-btn" data-action="skeleton:template" data-tpl="student">🎓 学生</button>
+    </div>
+    <label class="ai-toggle"><input type="checkbox" data-sked="enabled" ${store.settings.skeleton.enabled ? 'checked' : ''}> 启用时间骨架匹配动线</label>
     <div class="week-editor">
       ${WEEK_DAYS.map(([key, label]) => `
         <div class="week-row">
           <span class="day">${label}</span>
-          <button class="week-edit" data-action="schedule:edit" data-day="${key}">${(store.settings.schedule.week[key] || []).length ? `${store.settings.schedule.week[key].length} 节课` : '未设置'}</button>
+          <button class="week-edit" data-action="skeleton:edit" data-day="${key}">${(store.settings.skeleton.week[key] || []).length ? `${store.settings.skeleton.week[key].length} 段` : '未设置'}</button>
         </div>`).join('')}
     </div>
     <div class="modal-actions">
@@ -1559,60 +1585,114 @@ function openSettings() {
     Store.save();
     openSettings();
   }));
-  // 课表开关
-  $$('#modal-root [data-sched]').forEach(inp => {
+  // 时间骨架开关
+  $$('#modal-root [data-sked]').forEach(inp => {
     inp.addEventListener('change', () => {
       const s = Store.load();
-      s.settings.schedule = s.settings.schedule || { enabled: false, week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] } };
-      s.settings.schedule.enabled = inp.checked;
+      s.settings.skeleton = s.settings.skeleton || { enabled: false, week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] }, overrides: {} };
+      s.settings.skeleton.enabled = inp.checked;
       Store.save();
-      aiToast('schedule_saved', {}, { fallback: inp.checked ? '课表已启用，之后我会把顺路的事嵌进课间和午间。' : '已关闭课表匹配，改用默认时段安排。' });
+      aiToast(inp.checked ? 'skeleton_saved' : 'skeleton_off', {}, { fallback: inp.checked ? '时间骨架已启用，我会把顺路的事嵌进空档。' : '已关闭时间骨架，改用默认时段安排。' });
     });
   });
 }
 
-/* 课表编辑 */
+/* ================= 时间骨架编辑 ================= */
 const WEEK_DAYS = [
   ['mon', '周一'], ['tue', '周二'], ['wed', '周三'], ['thu', '周四'],
   ['fri', '周五'], ['sat', '周六'], ['sun', '周日']
 ];
-function openScheduleDay(day) {
+const DOW_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const SKELETON_TEMPLATES = {
+  work: [
+    { start: '09:00', end: '12:00', tag: '工作' },
+    { start: '12:00', end: '13:00', tag: '午休' },
+    { start: '13:00', end: '18:00', tag: '工作' }
+  ],
+  student: [
+    { start: '08:00', end: '12:00', tag: '上课' },
+    { start: '12:00', end: '14:00', tag: '午休' },
+    { start: '14:00', end: '17:00', tag: '上课' }
+  ]
+};
+
+/** 套用模板：填入周一至周五，周六日不动 */
+function applyTemplate(tpl) {
   const store = Store.load();
-  const sched = store.settings.schedule;
-  const list = (sched.week[day] || []).slice();
-  const rows = list.length ? list.map((c, i) => `
+  const t = SKELETON_TEMPLATES[tpl];
+  if (!t) return;
+  const name = tpl === 'work' ? '全职工作' : '学生';
+  const hasAny = WEEK_DAYS.some(([k]) => (store.settings.skeleton.week[k] || []).length > 0);
+  const doApply = () => {
+    WEEK_DAYS.slice(0, 5).forEach(([k]) => {
+      store.settings.skeleton.week[k] = t.map(x => ({ id: Store.uid(), start: x.start, end: x.end, tag: x.tag }));
+    });
+    store.settings.skeleton.enabled = true;
+    Store.save();
+    aiToast('skeleton_templated', { tpl: name }, { fallback: `已按「${name}」搭好周一至周五的时间骨架，可在下面微调。` });
+    openSettings();
+  };
+  if (hasAny) toast(`套用「${name}」会覆盖周一至周五已有的时间骨架，继续吗？`, {
+    buttons: [{ label: '继续', kind: 'primary', action: doApply }, { label: '取消' }]
+  });
+  else doApply();
+}
+
+/** 打开某天（或今日覆盖）的时间骨架编辑器 */
+function openSkeletonDay(day) {
+  const store = Store.load();
+  const sk = store.settings.skeleton;
+  const isToday = day === 'today';
+  const dow = isToday ? DOW_KEYS[new Date(Store.todayStr() + 'T00:00:00').getDay()] : day;
+  const list = isToday
+    ? (((sk.overrides && sk.overrides[Store.todayStr()]) !== undefined) ? sk.overrides[Store.todayStr()] : (sk.week[dow] || []))
+    : (sk.week[day] || []);
+  const dayName = isToday ? '今天' : WEEK_DAYS.find(d => d[0] === day)[1];
+  const rows = list.map((c, i) => `
     <div class="srow" data-idx="${i}">
-      <input class="input s-time" data-f="start" placeholder="开始 如08:00" value="${esc(c.start || '')}">
-      <input class="input s-time" data-f="end" placeholder="结束 如09:40" value="${esc(c.end || '')}">
-      <input class="input s-name" data-f="name" placeholder="课程名 如高数" value="${esc(c.name || '')}">
-      <input class="input s-place" data-f="place" placeholder="地点 如A301" value="${esc(c.place || '')}">
-      <button class="mini-btn ghost" data-action="schedule:del" data-idx="${i}">删</button>
-    </div>`).join('') : '';
+      <input class="input s-time" data-f="start" placeholder="开始 如09:00" value="${esc(c.start || '')}">
+      <input class="input s-time" data-f="end" placeholder="结束 如12:00" value="${esc(c.end || '')}">
+      <input class="input s-name" data-f="tag" placeholder="标签 如上课/工作/午休" value="${esc(c.tag || '')}">
+      <button class="mini-btn ghost" data-action="skeleton:del" data-idx="${i}">删</button>
+    </div>`).join('');
   openModal(modalShell(
-    `${WEEK_DAYS.find(d => d[0] === day)[1]}课表`, '填写课程的起止时间与名称，墨会在课间/午间安排顺路的事。',
+    `${dayName}·时间骨架`,
+    isToday ? '今天临时有变化？在这里单独调整，只覆盖今天，不影响其他日期。' : '填固定被占用的时间段，墨会避开它们，把顺路的事嵌进空档。',
     `<div class="sched-editor" id="sched-editor" data-day="${day}">
       ${rows}
-      <button class="mini-btn" data-action="schedule:add" style="margin-top:8px">+ 添加课程</button>
+      <button class="mini-btn" data-action="skeleton:add" style="margin-top:8px">+ 添加时间段</button>
+      ${isToday ? '' : `
+      <div class="copy-box">
+        <button class="mini-btn ghost" data-action="skeleton:copy-toggle" style="margin-top:10px">📋 复制到其他日期</button>
+        <div class="copy-targets" id="copy-targets" style="display:none">
+          <div class="chips" style="margin-top:8px">
+            ${WEEK_DAYS.filter(d => d[0] !== day).map(([k, label]) => `<button class="chip" data-copy-day="${k}">${label}</button>`).join('')}
+          </div>
+          <button class="mini-btn ok" data-action="skeleton:copy-do" style="margin-top:8px">复制到所选日期</button>
+        </div>
+      </div>`}
     </div>`,
     `<div class="modal-actions">
+      ${isToday ? `<button class="btn-ghost" data-action="skeleton:reset-today">恢复本周默认</button>` : ''}
       <button class="btn-ghost" data-action="modal:close">取消</button>
-      <button class="btn-primary" data-action="schedule:save" data-day="${day}">保存课表</button>
+      <button class="btn-primary" data-action="skeleton:save" data-day="${day}">保存</button>
     </div>`
   ));
 }
-function addScheduleRow() {
+
+function addSkeletonRow() {
   const box = $('#sched-editor');
-  const add = box.querySelector('[data-action="schedule:add"]');
+  const add = box.querySelector('[data-action="skeleton:add"]');
   const row = el(`<div class="srow">
-      <input class="input s-time" data-f="start" placeholder="开始 如08:00">
-      <input class="input s-time" data-f="end" placeholder="结束 如09:40">
-      <input class="input s-name" data-f="name" placeholder="课程名 如高数">
-      <input class="input s-place" data-f="place" placeholder="地点 如A301">
-      <button class="mini-btn ghost" data-action="schedule:del" data-idx="-1">删</button>
+      <input class="input s-time" data-f="start" placeholder="开始 如09:00">
+      <input class="input s-time" data-f="end" placeholder="结束 如12:00">
+      <input class="input s-name" data-f="tag" placeholder="标签 如上课/工作/午休">
+      <button class="mini-btn ghost" data-action="skeleton:del" data-idx="-1">删</button>
     </div>`);
   box.insertBefore(row, add);
 }
-function delScheduleRow(idx) {
+
+function delSkeletonRow(idx) {
   const box = $('#sched-editor');
   const rows = [...box.querySelectorAll('.srow')];
   const target = rows[idx];
@@ -1620,23 +1700,114 @@ function delScheduleRow(idx) {
   // 修正剩余行 data-idx
   [...box.querySelectorAll('.srow')].forEach((r, i) => { r.dataset.idx = i; });
 }
-function saveScheduleDay(day) {
-  const store = Store.load();
-  store.settings.schedule = store.settings.schedule || { enabled: false, week: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] } };
+
+/** 收集编辑器中的时间段（按开始时间排序） */
+function collectSkeletonRows() {
   const rows = [...$$('#sched-editor .srow')];
   const list = [];
   rows.forEach(r => {
     const start = r.querySelector('[data-f="start"]').value.trim();
     const end = r.querySelector('[data-f="end"]').value.trim();
-    const name = r.querySelector('[data-f="name"]').value.trim();
-    const place = r.querySelector('[data-f="place"]').value.trim();
-    if (start || end || name) list.push({ id: Store.uid(), start, end, name: name || '课程', place });
+    const tag = r.querySelector('[data-f="tag"]').value.trim();
+    if (start || end || tag) list.push({ id: Store.uid(), start, end, tag: tag || '已占用' });
   });
   list.sort((a, b) => (a.start || '').localeCompare(b.start || ''));
-  store.settings.schedule.week[day] = list;
+  return list;
+}
+
+function saveSkeletonDay(day) {
+  const store = Store.load();
+  const list = collectSkeletonRows();
+  const isToday = day === 'today';
+  if (isToday) {
+    store.settings.skeleton.overrides[Store.todayStr()] = list;
+    Store.save();
+    closeModal();
+    aiToast('skeleton_override', {}, { fallback: `今天已单独调整（${list.length ? list.length + ' 段' : '今日无固定安排'}），其他日期不受影响。` });
+  } else {
+    store.settings.skeleton.week[day] = list;
+    Store.save();
+    closeModal();
+    aiToast('skeleton_saved', {}, { fallback: `${WEEK_DAYS.find(d => d[0] === day)[1]}已保存（${list.length} 段）。` });
+  }
+  render();
+}
+
+function resetTodaySkeleton() {
+  const store = Store.load();
+  delete store.settings.skeleton.overrides[Store.todayStr()];
   Store.save();
   closeModal();
-  aiToast('schedule_saved', {}, { fallback: `${WEEK_DAYS.find(d => d[0] === day)[1]}课表已保存（${list.length} 节课）。` });
+  aiToast('skeleton_reset', {}, { fallback: '今天已恢复本周默认的时间骨架。' });
+  render();
+}
+
+function toggleCopyTargets() {
+  const box = $('#copy-targets');
+  if (!box) return;
+  box.style.display = box.style.display === 'none' ? '' : 'none';
+}
+
+function copySkeletonToDays() {
+  const store = Store.load();
+  const list = collectSkeletonRows();
+  const targets = [...$$('#copy-targets .chip.on')].map(c => c.dataset.copyDay);
+  if (!targets.length) { toast('先点选要复制到的日期'); return; }
+  targets.forEach(k => { store.settings.skeleton.week[k] = list.map(x => ({ ...x })); });
+  Store.save();
+  aiToast('skeleton_copied', {}, { fallback: `已复制到 ${targets.map(k => WEEK_DAYS.find(d => d[0] === k)[1]).join('、')}。` });
+}
+
+/* ================= 首次使用引导 ================= */
+function maybeOnboardSkeleton() {
+  const store = Store.load();
+  if (store.flags.skeletonShown) return;
+  const sk = store.settings.skeleton;
+  const hasAny = WEEK_DAYS.some(([k]) => (sk.week[k] || []).length > 0) || (sk.overrides && Object.keys(sk.overrides).length > 0);
+  if (hasAny) { store.flags.skeletonShown = true; Store.save(); return; }
+  openModal(modalShell(
+    '🗓 先搭好你的时间骨架',
+    '告诉我每周哪些时间固定被占用（上课、工作、午休…），墨就会避开它们，把任务顺路嵌进空档。设置一次，长期生效，也可以随时在设置里改。',
+    `<div class="skeleton-tools">
+      <button class="mini-btn" data-action="skeleton:onboard" data-tpl="work">🧑‍💻 我是上班族</button>
+      <button class="mini-btn" data-action="skeleton:onboard" data-tpl="student">🎓 我是学生</button>
+      <button class="mini-btn ghost" data-action="skeleton:onboard" data-tpl="custom">✏️ 我自己来</button>
+    </div>`,
+    `<div class="modal-actions">
+      <button class="btn-ghost" data-action="skeleton:onboard-skip">先跳过</button>
+    </div>`
+  ));
+}
+
+function onboardSkeleton(tpl) {
+  const store = Store.load();
+  store.flags.skeletonShown = true;
+  if (tpl === 'custom') {
+    store.settings.skeleton.enabled = true;
+    Store.save();
+    closeModal();
+    openSkeletonDay('mon');
+    return;
+  }
+  const t = SKELETON_TEMPLATES[tpl];
+  if (t) {
+    WEEK_DAYS.slice(0, 5).forEach(([k]) => {
+      store.settings.skeleton.week[k] = t.map(x => ({ id: Store.uid(), start: x.start, end: x.end, tag: x.tag }));
+    });
+    store.settings.skeleton.enabled = true;
+    Store.save();
+  }
+  closeModal();
+  aiToast('skeleton_onboard', {}, { fallback: `已按「${tpl === 'work' ? '上班族' : '学生'}」搭好时间骨架，可随时在设置里微调。` });
+  render();
+}
+
+function onboardSkip() {
+  const store = Store.load();
+  store.flags.skeletonShown = true;
+  Store.save();
+  closeModal();
+  aiToast('skeleton_onboard', {}, { fallback: '好的。需要时，随时在设置里搭时间骨架。' });
 }
 
 /* AI 连接测试 */

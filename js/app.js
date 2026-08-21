@@ -19,6 +19,9 @@ const App = {
   ocrDraft: null,
   pendingGoal: null,
   longPressTimer: null,
+  doneExpanded: false,        // 今日页「已完成」折叠
+  doneGoalsExpanded: false,   // 目标页「已完成」折叠
+  reviewDoneExpanded: false,  // 复盘页「已完成明细」折叠
   moodLabels: { '😊': '状态不错', '😐': '一般般', '😔': '有点累' }
 };
 
@@ -113,9 +116,21 @@ function renderHeader() {
       </div>`;
   } else {
     const titles = { goals: '目标', backlog: '待办', review: '复盘' };
+    // 副标题：每个页面第一眼的总览
+    let sub = '';
+    if (App.tab === 'goals') {
+      const active = store.goals.filter(g => !g.archived).length;
+      const done = store.goals.filter(g => g.archived).length + (store.archivedGoals || []).length;
+      sub = `进行中 ${active} 个 · 已完成 ${done} 个`;
+    } else if (App.tab === 'backlog') {
+      sub = `共 ${store.backlog.length} 件`;
+    } else if (App.tab === 'review') {
+      sub = App.reviewTab === 'weekly' ? '每周回顾' : '每月回顾';
+    }
     $h.innerHTML = `
       <div class="header-inner centered">
         <div class="greet-title">${titles[App.tab]}</div>
+        <div class="greet-sub">${sub}</div>
         <div class="header-tools">
           <button class="icon-btn" data-action="settings:open" title="设置" aria-label="设置">${settingsIcon()}</button>
         </div>
@@ -124,7 +139,17 @@ function renderHeader() {
 }
 
 function renderTabbar() {
-  $$('#tabbar .tab-btn').forEach(b => b.classList.toggle('on', b.dataset.tab === App.tab));
+  const store = Store.load();
+  $$('#tabbar .tab-btn').forEach(b => {
+    const isOn = b.dataset.tab === App.tab;
+    b.classList.toggle('on', isOn);
+    // 有更新小点：只在非当前页显示，进入后自然消失
+    let dot = false;
+    if (b.dataset.tab === 'today') dot = store.today.tasks.some(t => !t.done && !t.matched);
+    else if (b.dataset.tab === 'goals') dot = store.goals.some(g => !g.archived && g.tasks.length && g.tasks.every(t => t.done));
+    else if (b.dataset.tab === 'backlog') dot = !!(store.flags.tabDots && store.flags.tabDots.backlog);
+    b.classList.toggle('dot', dot && !isOn);
+  });
 }
 
 let _lastViewKey = '';
@@ -259,7 +284,6 @@ function renderToday() {
   const totalMin = undone.reduce((s, t) => s + (t.estMin || 0), 0);
   const budget = 180;
   const freeMin = Math.max(0, budget - totalMin);
-  const prioCount = undone.filter(t => t.priority).length;
 
   const slots = AI.buildSlots(Store.todayStr());
   const slotByKey = {};
@@ -358,23 +382,22 @@ function renderToday() {
   }
 
   const suggest = AI.suggestTomorrow();
-  const statsPanel = `
-    <div class="stats-panel">
-      <div class="card">
-        <div class="stats-grid">
-          <div class="stat"><div class="v">${doneTasks.length}<small>/${store.today.tasks.length}</small></div><div class="l">今日完成</div></div>
-          <div class="stat"><div class="v">${freeMin}<small>分钟</small></div><div class="l">剩余空闲</div></div>
-        </div>
-        <div class="divider"></div>
-        <div class="stat" style="padding:0 2px">
-          <div class="l" style="margin-bottom:4px">明日建议</div>
-          <div class="v" style="font-size:17px">${suggest.count} 件</div>
-          <div class="l" style="margin-top:4px">基于你最近的节奏${suggest.weekend ? ' · 周末' : ''}</div>
-          <div id="tomorrow-note" style="margin-top:8px;font-size:13px;line-height:1.7;color:var(--ink)"></div>
-        </div>
-        ${store.today.status ? `<div class="divider"></div><div style="font-size:13px;color:var(--ink-2)">今日状态：${store.today.status} ${App.moodLabels[store.today.status]}</div>` : ''}
-      </div>
-    </div>`;
+  // ② 今日核心目标：优先任务置顶，一眼看到今天最重要的事
+  const prioUndone = undone.filter(t => t.priority);
+  const p0Card = `
+    <section class="card p0-card${prioUndone.length ? '' : ' p0-empty'}">
+      <div class="card-title"><span class="t">⭐ 今日核心目标</span></div>
+      ${prioUndone.length ? prioUndone.map(t => `
+        <div class="p0-item">
+          <button class="p0-check" data-action="task:check" data-id="${t.id}" aria-label="完成"></button>
+          <div class="p0-body">
+            <span class="p0-text">${esc(t.text)}</span>
+            ${t.why ? `<span class="p0-why">${esc(t.why)}</span>` : ''}
+          </div>
+          ${t.estMin ? `<span class="p0-min">${t.estMin}分钟</span>` : ''}
+        </div>`).join('') : `
+        <div class="p0-empty-txt">今天没有标记优先的事，挑一件最想先完成的就好。</div>`}
+    </section>`;
 
   const pendingCount = undone.filter(t => !t.matched).length;
 
@@ -388,59 +411,72 @@ function renderToday() {
     ? `<button class="mini-btn ghost" data-action="skeleton:today" style="margin-left:auto">今日微调</button>`
     : '';
 
+  // ③ 今日概览：总量一行 + 明日建议小字（LLM 个性化方案注入下方）
+  const overviewBar = `
+    <div class="task-bar task-bar-tl">
+      <div class="stats"><strong>${undone.length}件</strong> · 预计 ${totalMin} 分钟 · 剩余空闲 ${freeMin} 分钟</div>
+      ${todaySkelBtn}
+    </div>
+    <div class="overview-sub">🌙 明日建议 ${suggest.count} 件${suggest.weekend ? ' · 周末' : ''} · 基于你最近的节奏</div>
+    <div id="tomorrow-note"></div>`;
+
+  // ⑦ 已完成区块（默认折叠，点击展开）
+  const doneSection = doneTasks.length ? `
+    <div class="completed-section">
+      <button class="completed-head" data-action="done:toggle">
+        <span class="lb">✅ 已完成 ${doneTasks.length} 件</span>
+        <span class="chev">${App.doneExpanded ? '▾' : '▸'}</span>
+      </button>
+      ${App.doneExpanded ? `<ul class="task-list">${doneTasks.map(taskRow).join('')}</ul>` : ''}
+    </div>` : '';
+
   return `
     <div class="today-stack">
+      ${p0Card}
+
+      ${overviewBar}
+
       ${hero}
 
-        ${pendingCount ? `
+      ${pendingCount ? `
         <div class="confirm-all">
           <span class="label">🛣 墨已把任务放进你的动线</span>
           <button class="btn" data-action="task:accept-all">一键全确认</button>
         </div>` : ''}
 
-        ${backlogHint}
-        ${fragCard}
+      ${backlogHint}
 
-        <div class="task-bar task-bar-tl">
-          <div class="stats"><strong>${undone.length}件</strong> · 预计 ${totalMin} 分钟</div>
-          ${todaySkelBtn}
-        </div>
+      <div class="timeline">
+        ${groups.map(g => `
+          <div class="timeline-block" data-slot="${g.key}">
+            <div class="time-label">
+              <span class="time">${g.time}</span>
+              <span class="label">${g.label}</span>
+              ${g.hint ? `<span class="sub">${esc(g.hint)}</span>` : ''}
+            </div>
+            <ul class="task-list tl-list">
+              ${g.tasks.map(taskRow).join('')}
+            </ul>
+          </div>`).join('')}
+      </div>
 
-        <div class="timeline">
-          ${groups.map(g => `
-            <div class="timeline-block" data-slot="${g.key}">
-              <div class="time-label">
-                <span class="time">${g.time}</span>
-                <span class="label">${g.label}</span>
-                ${g.hint ? `<span class="sub">${esc(g.hint)}</span>` : ''}
-              </div>
-              <ul class="task-list tl-list">
-                ${g.tasks.map(taskRow).join('')}
-              </ul>
-            </div>`).join('')}
-        </div>
+      ${fragCard}
 
-        ${doneTasks.length ? `
-          <div class="completed-section">
-            <div class="label">✅ 已完成</div>
-            <ul class="task-list">${doneTasks.map(taskRow).join('')}</ul>
-          </div>` : ''}
+      ${doneSection}
 
-        ${statsPanel}
+      <div class="today-bottom">
+        <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
+          📋 待办 <span class="n">${store.backlog.length}</span> 件
+        </button>
+        <button class="quick-ic" data-action="camera:open" title="拍照识别" aria-label="拍照识别">
+          <span class="qi-ic">📷</span><span class="qi-lb">拍照</span>
+        </button>
+        <button class="quick-ic" data-action="history:open" title="历史消息" aria-label="历史消息">
+          <span class="qi-ic">💬</span><span class="qi-lb">消息</span>
+        </button>
+      </div>
 
-        <div class="today-bottom">
-          <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
-            📋 待办 <span class="n">${store.backlog.length}</span> 件
-          </button>
-          <button class="quick-ic" data-action="camera:open" title="拍照识别" aria-label="拍照识别">
-            <span class="qi-ic">📷</span><span class="qi-lb">拍照</span>
-          </button>
-          <button class="quick-ic" data-action="history:open" title="历史消息" aria-label="历史消息">
-            <span class="qi-ic">💬</span><span class="qi-lb">消息</span>
-          </button>
-        </div>
-
-        <div class="end-note">✦ 今天做完这些就够了 ✦</div>
+      <div class="end-note">✦ 今天做完这些就够了 ✦</div>
     </div>`;
 }
 
@@ -577,15 +613,18 @@ function renderBacklog() {
           <button class="mini-btn ghost" data-action="inbox:del" data-id="${item.id}">删除</button>
         </div>
       </div>`;
-  }).join('') : '<div class="inbox-empty">先记下来，稍后整理。</div>';
+  }).join('') : '<div class="inbox-empty">想法存下后会自动收进下面的待办 ✨</div>';
 
   const inboxCard = `
     <section class="card inbox-card">
       <div class="card-title">
-        <span class="t">✏️ 灵感箱</span>
-        <span class="meta">先记下来，稍后由墨帮你归类</span>
+        <span class="t">✨ 灵感箱</span>
+        <span class="meta">记下来，不打断当下</span>
       </div>
-      <input class="input inbox-input" id="inbox-input" placeholder="冒出什么想法？先写在这里，不用马上分类…">
+      <div class="inbox-row">
+        <input class="input inbox-input" id="inbox-input" placeholder="冒出什么想法？先写在这里…">
+        <button class="btn inbox-save" data-action="inbox:add">存入</button>
+      </div>
       <div class="inbox-list">${inboxHtml}</div>
     </section>`;
 
@@ -606,7 +645,7 @@ function renderBacklog() {
   const dates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
 
   const groupHtml = dates.map(d => `
-    <div class="date-group-label">📅 来自${Store.fmtMD(d)}</div>
+    <div class="date-group-label">📅 ${d === Store.todayStr() ? `今天（${Store.fmtMD(d)}）` : Store.fmtMD(d)}</div>
     <div class="card backlog-group">
       <ul class="task-list">
         ${groups[d].map(b => {
@@ -634,6 +673,7 @@ function renderBacklog() {
       ${inboxCard}
       ${remind}
       ${groupHtml}
+      <div class="tip-line">左滑 → 编辑 / 移动 / 删除 · 长按 → 更多操作</div>
       <div class="end-line">—— 没有更多了 ——</div>
       <button class="fab" data-action="inbox:focus" title="添加想法" aria-label="添加想法">＋</button>
     </div>`;
@@ -648,7 +688,11 @@ function focusInbox() {
 }
 function inboxAdd(text) {
   const store = Store.load();
-  store.inbox.unshift({ id: Store.uid(), text: text.trim(), at: new Date().toISOString() });
+  const txt = String(text || '').trim();
+  if (!txt) return;
+  // 灵感箱 → 待办联动：存入即自动收进待办列表（今天分组）
+  store.backlog.unshift({ id: Store.uid(), text: txt, estMin: 15, priority: false, originalDate: Store.todayStr(), why: '' });
+  store.flags.tabDots = { ...(store.flags.tabDots || {}), backlog: true };
   Store.save();
   aiToast('inbox_captured');
   render();
@@ -735,7 +779,9 @@ function pickSlot(id, slotKey) {
 /* ================= 目标页 ================= */
 function renderGoals() {
   const store = Store.load();
-  const active = store.goals.filter(g => !g.archived);
+  // 进行中目标按进度从高到低排列（先看到接近完成的，有成就感）
+  const pctOf = g => g.tasks.length ? Math.round(g.tasks.filter(t => t.done).length / g.tasks.length * 100) : 0;
+  const active = store.goals.filter(g => !g.archived).slice().sort((a, b) => pctOf(b) - pctOf(a));
   const archived = store.goals.filter(g => g.archived);
 
   const goalCard = (g) => {
@@ -820,11 +866,16 @@ function renderGoals() {
         ];
         if (!doneGoals.length) return '';
         return `
-        <div class="goal-done-title">✅ 已完成 <span class="n">（${doneGoals.length}个）</span></div>
-        ${doneGoals.map(g => `<div class="card" style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center">
-          <span style="font-size:15px;font-weight:500">${esc(g.title)}</span>
-          <span style="font-size:12px;color:var(--ink-2)">${Store.fmtMD(g.doneDate)} 归档</span>
-        </div>`).join('')}`;
+        <div class="goal-done-block">
+          <button class="goal-done-head" data-action="goals-done:toggle">
+            <span class="lb">✅ 已完成 <span class="n">${doneGoals.length} 个</span></span>
+            <span class="chev">${App.doneGoalsExpanded ? '▾' : '▸'}</span>
+          </button>
+          ${App.doneGoalsExpanded ? doneGoals.map(g => `<div class="card goal-done-item">
+            <span class="gt">${esc(g.title)}</span>
+            <span class="gd">${Store.fmtMD(g.doneDate)} 归档</span>
+          </div>`).join('') : ''}
+        </div>`;
       })()}
     </div>`;
 }
@@ -856,35 +907,42 @@ function renderReview() {
       </svg>
       <div class="spark-labels"><span>${r.days[0].dow}</span><span>${r.days[6].dow}</span></div>`;
 
-    const list = weekEntries.slice().reverse().map(g => `
+    const list = weekEntries.map(g => `
       <div class="review-day">${Store.fmtMD(g.ymd)} · ${Store.fmtDOW(g.ymd)}</div>
       ${g.items.map(e => `
         <div class="review-task"><span class="mood">${e.mood}</span><span>${esc(e.text)}</span><span style="margin-left:auto;font-size:12px;color:var(--ink-2)">${e.estMin}分钟</span></div>`).join('')}`).join('');
+    const mx = Math.max(...r.days.map(d => d.done), 0);
+    const mnDays = r.days.filter(d => d.done > 0);
+    const mn = mnDays.length ? Math.min(...mnDays.map(d => d.done)) : 0;
 
     return `
       <div class="page-stack">
         ${seg}
-        ${bubble(`本周完成${r.total}件。状态曲线：${r.curve}。${r.advice}`, 'left', 'review-week-bubble')}
-        <div id="ai-insight" class="card ai-insight" style="display:none">
-          <div class="card-title"><span class="t">墨的复盘</span><span class="tag-ai">AI</span></div>
-          <div class="ai-insight-body"></div>
-        </div>
         <div class="big-stat">
           <div class="v">${r.total}</div>
           <div class="l">本周完成（最近7天）</div>
+          <div class="s">周最高 ${mx} 件 · 周最低 ${mn} 件</div>
         </div>
         <div class="card">
           <div class="card-title"><span class="t">节奏回顾</span></div>
           <div class="card-sub">每天完成的任务数量</div>
           ${spark}
           <div class="divider"></div>
-          <div style="font-size:14px;line-height:1.7;color:var(--ink-2)">${r.curve}。</div>
+          <div style="font-size:14px;line-height:1.7;color:var(--ink-2)">${r.curve}。${r.advice}</div>
         </div>
         ${r.fullAttendance ? `<div class="full-attend">🏆 ${AI.copy('streak3')} · 连续${calcStreak()}天全勤</div>` : ''}
-        <section class="card">
-          <div class="card-title"><span class="t">已完成任务</span></div>
-          ${list || '<div class="card-sub">本周还没有完成记录。</div>'}
-        </section>
+        <div id="ai-insight" class="card ai-insight" style="display:none">
+          <div class="card-title"><span class="t">墨的复盘</span><span class="tag-ai">AI</span></div>
+          <div class="ai-insight-body"></div>
+        </div>
+        ${list ? `
+          <section class="card completed-fold">
+            <button class="review-done-head" data-action="review-done:toggle">
+              <span class="lb">✅ 查看本周全部已完成（${r.total}件）</span>
+              <span class="chev">${App.reviewDoneExpanded ? '▾' : '▸'}</span>
+            </button>
+            ${App.reviewDoneExpanded ? `<div class="review-done-list">${list}</div>` : ''}
+          </section>` : ''}
       </div>`;
   }
 
@@ -900,18 +958,25 @@ function renderReview() {
   const repeatedText = m.repeated.length
     ? m.repeated.map(r => `“${r.text}”×${r.n}`).join('、')
     : '本月还没有重复出现的灵感';
+  const avg = m.total ? Math.round(m.total / Math.max(1, new Date().getDate()) * 10) / 10 : 0;
+  // 本月已完成明细（默认折叠，从近到远）
+  const monPrefix = Store.todayStr().slice(0, 7);
+  const monEntries = store.completedLog.filter(e => e.date.startsWith(monPrefix)).sort((a, b) => b.date.localeCompare(a.date));
+  const monGroups = {};
+  monEntries.forEach(e => { (monGroups[e.date] = monGroups[e.date] || []).push(e); });
+  const monDates = Object.keys(monGroups).sort((a, b) => b.localeCompare(a));
+  const monList = monDates.map(d => `
+    <div class="review-day">${Store.fmtMD(d)} · ${Store.fmtDOW(d)}</div>
+    ${monGroups[d].map(e => `
+      <div class="review-task"><span class="mood">${e.mood}</span><span>${esc(e.text)}</span><span style="margin-left:auto;font-size:12px;color:var(--ink-2)">${e.estMin}分钟</span></div>`).join('')}`).join('');
 
   return `
     <div class="page-stack">
       ${seg}
-      ${bubble(`本月完成${m.total}件。重复出现的灵感有：${repeatedText}。`, 'left', 'review-month-bubble')}
-      <div id="ai-insight" class="card ai-insight" style="display:none">
-        <div class="card-title"><span class="t">墨的复盘</span><span class="tag-ai">AI</span></div>
-        <div class="ai-insight-body"></div>
-      </div>
       <div class="big-stat">
         <div class="v">${m.total}</div>
         <div class="l">本月完成</div>
+        <div class="s">日均 ${avg} 件 · 重复灵感：${repeatedText}</div>
       </div>
       <div class="card">
         <div class="card-title"><span class="t">月度回声墙</span></div>
@@ -922,6 +987,18 @@ function renderReview() {
         <div class="card-title"><span class="t">重复出现的灵感</span></div>
         ${m.repeated.map(r => `<div class="review-task"><span>${esc(r.text)}</span><span style="margin-left:auto;font-size:12px;color:var(--ink-2)">出现${r.n}次</span></div>`).join('')}
       </div>` : ''}
+      <div id="ai-insight" class="card ai-insight" style="display:none">
+        <div class="card-title"><span class="t">墨的复盘</span><span class="tag-ai">AI</span></div>
+        <div class="ai-insight-body"></div>
+      </div>
+      ${monList ? `
+        <section class="card completed-fold">
+          <button class="review-done-head" data-action="review-done:toggle">
+            <span class="lb">✅ 查看本月全部已完成（${monEntries.length}件）</span>
+            <span class="chev">${App.reviewDoneExpanded ? '▾' : '▸'}</span>
+          </button>
+          ${App.reviewDoneExpanded ? `<div class="review-done-list">${monList}</div>` : ''}
+        </section>` : ''}
     </div>`;
 }
 
@@ -1646,7 +1723,13 @@ function onClick(e) {
   if (btn.classList.contains('chip')) { btn.classList.toggle('on'); return; }
 
   switch (act) {
-    case 'tab:switch': App.tab = btn.dataset.tab; render(); break;
+    case 'tab:switch':
+      // 进入待办页后清除「新想法」小点
+      if (btn.dataset.tab === 'backlog') {
+        const st = Store.load();
+        if (st.flags.tabDots && st.flags.tabDots.backlog) { st.flags.tabDots.backlog = false; Store.save(); }
+      }
+      App.tab = btn.dataset.tab; render(); break;
     case 'settings:open': openSettings(); break;
     case 'modal:close': closeModal(); break;
     case 'mood:open': openMoodPicker(); break;
@@ -1673,7 +1756,7 @@ function onClick(e) {
     case 'goal:task': toggleGoalTask(btn.dataset.tid); break;
     case 'goal:archive': archiveGoal(id); break;
     case 'goal:keep': keepGoal(id); break;
-    case 'review:tab': App.reviewTab = btn.dataset.val; renderView(); break;
+    case 'review:tab': App.reviewTab = btn.dataset.val; render(); break;
     case 'review:save': saveReview(); break;
     case 'ocr:edit': startOcrEdit(Number(btn.dataset.idx)); break;
     case 'ocr:copy': ocrCopy(Number(btn.dataset.idx)); break;
@@ -1705,6 +1788,14 @@ function onClick(e) {
     case 'inbox:del': inboxDel(id); break;
     case 'inbox:copy': inboxCopy(id); break;
     case 'inbox:focus': focusInbox(); break;
+    case 'inbox:add': {
+      const inp = $('#inbox-input');
+      if (inp && inp.value.trim()) { inboxAdd(inp.value); inp.value = ''; }
+      break;
+    }
+    case 'done:toggle': App.doneExpanded = !App.doneExpanded; render(); break;
+    case 'goals-done:toggle': App.doneGoalsExpanded = !App.doneGoalsExpanded; render(); break;
+    case 'review-done:toggle': App.reviewDoneExpanded = !App.reviewDoneExpanded; render(); break;
     case 'edit:save': saveTaskEdit(id, btn.dataset.src); break;
     case 'frag:start': fragStart(id, btn.dataset.from); break;
     case 'frag:ignore': fragIgnore(id); break;

@@ -366,6 +366,59 @@ html[data-theme="dark"] .goal-dot{border-color:rgba(255,255,255,.28)}
 .goal-card.done .goal-progress .bar{background:rgba(0,0,0,.16)}
 html[data-theme="dark"] .goal-card.done .goal-progress .bar{background:rgba(255,255,255,.2)}
 .goal-kept-tag{display:inline-block;margin-top:6px;font-size:11px;color:var(--ink-2);border:.5px solid var(--line);border-radius:8px;padding:2px 8px}
+/* 目标卡片：三阶段状态点 */
+.goal-stages{display:flex;gap:6px;margin-top:8px}
+.goal-stages .gs{
+  width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:600;
+  display:grid;place-items:center;border:1px solid var(--line);color:var(--ink-2);background:rgba(255,255,255,.4);
+}
+html[data-theme="dark"] .goal-stages .gs{background:rgba(255,255,255,.05)}
+.goal-stages .gs.going{border-color:var(--accent);color:var(--accent);background:rgba(212,184,217,.18)}
+.goal-stages .gs.done{background:var(--leaf,#7FB97A);border-color:var(--leaf,#7FB97A);color:#fff}
+/* 新建目标表单 */
+.gf-label{font-size:12px;color:var(--ink-2);margin:12px 2px 4px}
+.gf-chips{display:flex;gap:6px;flex-wrap:wrap;margin:0}
+.gf-chips .chip{
+  padding:7px 12px;border-radius:16px;font-size:12.5px;color:var(--ink-2);
+  border:.5px solid var(--line);background:rgba(255,255,255,.5);transition:all .18s var(--ease);
+}
+html[data-theme="dark"] .gf-chips .chip{background:rgba(255,255,255,.05)}
+.gf-chips .chip.on{
+  background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;border-color:transparent;
+  box-shadow:0 4px 12px rgba(184,160,200,.35);
+}
+.gf-tip{font-size:11.5px;color:var(--ink-2);background:rgba(212,184,217,.1);border-radius:10px;padding:8px 10px;margin-top:10px;line-height:1.55}
+/* 拆解结果 */
+.decomp-hero{margin:4px 0 12px}
+.decomp-hero .goal-progress{margin-bottom:8px}
+.decomp-meta{font-size:12px;color:var(--ink-2);line-height:1.6}
+.phase-card{
+  background:rgba(255,255,255,.55);border:.5px solid var(--line);border-radius:14px;
+  padding:12px 14px;margin-bottom:10px;backdrop-filter:blur(12px);
+}
+html[data-theme="dark"] .phase-card{background:rgba(255,255,255,.06)}
+.phase-head{display:flex;align-items:center;gap:8px}
+.phase-name{font-size:14.5px;font-weight:700}
+.phase-dur{font-size:11px;color:var(--accent);background:rgba(212,184,217,.15);border-radius:8px;padding:2px 7px}
+.phase-st{margin-left:auto;font-size:11px;color:var(--ink-2)}
+.phase-milestone{font-size:12px;color:var(--ink-2);margin:6px 0 8px}
+.phase-tasks{display:flex;flex-direction:column;gap:4px}
+.ptask{display:flex;gap:8px;align-items:baseline;font-size:12.5px;line-height:1.45}
+.ptask-day{flex:none;font-size:10.5px;color:var(--accent);font-weight:600;width:44px}
+.ptask-text{color:var(--ink)}
+.decomp-today,.decomp-next{
+  border-radius:14px;padding:10px 12px;margin-bottom:10px;border:.5px solid var(--line);
+}
+.decomp-today{background:rgba(212,184,217,.12)}
+.decomp-next{background:rgba(255,255,255,.45)}
+html[data-theme="dark"] .decomp-next{background:rgba(255,255,255,.05)}
+.dt-title{font-size:13px;font-weight:700;margin-bottom:6px}
+.dt-title.dim{color:var(--ink-2)}
+/* 详情页阶段小卡 */
+.phase-card.sm{padding:10px 12px}
+.phase-card.sm .phase-progress{height:5px;border-radius:4px;background:rgba(0,0,0,.05);overflow:hidden}
+html[data-theme="dark"] .phase-card.sm .phase-progress{background:rgba(255,255,255,.08)}
+.phase-card.sm .phase-progress .bar{height:100%;background:linear-gradient(90deg,var(--primary),var(--aux))}
 .achieve-banner{
   display:flex;align-items:center;gap:12px;
   background:linear-gradient(135deg,var(--primary),var(--aux));

@@ -48,6 +48,8 @@ function rolloverIfNewDay() {
   });
   store.today = { status: null, tasks: assembleDay(today) };
   store.todayDate = today;
+  /* 清理已过期的「明日增量」标记 */
+  if (store.flags.tomorrowBoost && store.flags.tomorrowBoost < today) delete store.flags.tomorrowBoost;
   Store.save();
 }
 
@@ -61,8 +63,11 @@ function assembleDay(date) {
     });
   });
   const suggest = AI.suggestTomorrow();
-  if (goalTasks.length >= suggest.count) return goalTasks;
-  const need = suggest.count - goalTasks.length;
+  /* 状态签到联动：😊 明日任务量 +1 件 */
+  let count = suggest.count;
+  if (store.flags.tomorrowBoost === date) count = Math.min(count + 1, 5);
+  if (goalTasks.length >= count) return goalTasks;
+  const need = count - goalTasks.length;
   const pull = store.backlog
     .sort((a, b) => (b.priority - a.priority) || a.originalDate.localeCompare(b.originalDate))
     .slice(0, need)
@@ -742,11 +747,26 @@ function renderGoals() {
     // 进度灯：每个任务一个灯点，完成 ● 未完成 ○
     const dots = g.tasks.map(t => `<span class="goal-dot ${t.done ? 'on' : ''}"></span>`).join('');
     const remain = total - done;
+    // 三阶段状态点 + 当前阶段名
+    let stageHtml = '';
+    let curPhaseName = '';
+    if (g.phases && g.phases.length) {
+      const undone = g.tasks.filter(t => !t.done);
+      const curPi = undone.length ? (undone[0].phase || 0) : g.phases.length - 1;
+      curPhaseName = g.phases[curPi] ? g.phases[curPi].name : '';
+      stageHtml = `<div class="goal-stages">${g.phases.map((p, pi) => {
+        const all = g.tasks.filter(t => (t.phase === undefined ? pi === 0 : t.phase === pi));
+        const pd = all.filter(t => t.done).length;
+        const st = all.length && pd >= all.length ? 'done' : (pd > 0 ? 'going' : 'todo');
+        return `<span class="gs ${st}" title="${esc(p.name)}">${pi + 1}</span>`;
+      }).join('')}</div>`;
+    }
     return `
       <article class="goal-card ${isKept ? 'done' : ''}" data-action="goal:detail" data-id="${g.id}">
         <div class="goal-progress"><div class="bar" style="width:${pct}%"></div></div>
         <div class="goal-title">${esc(g.title)}</div>
-        <div class="goal-sub">${pct}% · 剩余${Math.max(0, leftDays)}天 · 还有${remain}件任务待完成</div>
+        <div class="goal-sub">${pct}% · 剩余${Math.max(0, leftDays)}天 · 还有${remain}件任务待完成${curPhaseName ? ` · ${esc(curPhaseName)}` : ''}</div>
+        ${stageHtml}
         ${isKept ? '<div class="goal-kept-tag">已达成 · 暂不归档</div>' : ''}
         <div class="goal-dots">${dots}</div>
       </article>`;
@@ -1204,82 +1224,104 @@ function fragIgnore(id) {
 
 /* ================= 目标相关 ================= */
 
-/* 新建目标 */
-function openNewGoal() {
+/* 新建目标：输入 + 人生阶段 + 周期 + 难度 */
+function openNewGoal(prefill) {
+  const stages = Object.values(GoalKB.LIFE_STAGES);
+  const diffs = Object.values(GoalKB.DIFFICULTIES);
+  App.goalForm = App.goalForm || { stage: 'starter', cycleDays: 14, difficulty: 'medium' };
   openModal(modalShell(
-    '✨ 新建目标', '输入你想完成的事，墨会帮你拆成每天能打勾的小步。',
-    `<input class="input" id="goal-input" placeholder="例如：8月内写一篇公众号文章" autofocus>
-     <div class="chips" id="deadline-chips">
-       <button class="chip on" data-days="10">10天</button>
-       <button class="chip" data-days="14">两周</button>
-       <button class="chip" data-days="21">三周</button>
-       <button class="chip" data-days="30">一个月</button>
+    '✨ 新建目标', '输入一个目标，墨会用本地知识库拆成每天能打勾的小步。',
+    `<input class="input" id="goal-input" placeholder="例如：写一篇公众号文章" value="${esc(prefill || '')}" autofocus>
+     <div class="gf-label">你正处于人生的哪个阶段？</div>
+     <div class="gf-chips" id="gf-stage">
+       ${stages.map(s => `<button class="chip ${s.id === App.goalForm.stage ? 'on' : ''}" data-val="${s.id}">${s.name}</button>`).join('')}
+     </div>
+     <div class="gf-label">计划用多久完成？</div>
+     <div class="gf-chips" id="gf-cycle">
+       ${GoalKB.CYCLES.map(c => `<button class="chip ${c.days === App.goalForm.cycleDays ? 'on' : ''}" data-days="${c.days}">${c.label}</button>`).join('')}
+     </div>
+     <div class="gf-label">难度</div>
+     <div class="gf-chips" id="gf-diff">
+       ${diffs.map(d => `<button class="chip ${d.id === App.goalForm.difficulty ? 'on' : ''}" data-val="${d.id}">${d.name}</button>`).join('')}
      </div>`,
-    `<div class="modal-actions"><button class="btn-primary" data-action="goal:decompose">让墨拆解</button></div>`
+    `<div class="modal-actions"><button class="btn-primary" data-action="goal:decompose">✨ 帮我拆解</button></div>`
   ));
-  let selected = 10;
-  $('#deadline-chips').addEventListener('click', e => {
+  bindChips('#gf-stage', v => { App.goalForm.stage = v; });
+  bindChips('#gf-cycle', v => { App.goalForm.cycleDays = Number(v); });
+  bindChips('#gf-diff', v => { App.goalForm.difficulty = v; });
+  const input = $('#goal-input');
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doDecompose(input.value); });
+  setTimeout(() => input.focus(), 60);
+}
+
+/* 胶囊单选绑定 */
+function bindChips(sel, cb) {
+  const root = $(sel);
+  if (!root) return;
+  root.addEventListener('click', e => {
     const b = e.target.closest('.chip');
     if (!b) return;
-    selected = Number(b.dataset.days);
-    $$('#deadline-chips .chip').forEach(c => c.classList.toggle('on', c === b));
+    root.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b));
+    cb(b.dataset.val !== undefined ? b.dataset.val : b.dataset.days);
   });
-  const input = $('#goal-input');
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') doDecompose(input.value, selected); });
 }
 
-async function doDecompose(inputText, days) {
+/* 本地知识库拆解：不依赖任何外部 API */
+function doDecompose(inputText) {
   if (!inputText.trim()) return;
   const store = Store.load();
-  const deadline = Store.shiftDate(Store.todayStr(), days);
-  // AI 生成加载态
-  openModal(modalShell('✨ 墨正在拆解…', '结合你的目标与性格，生成温柔可行的每日任务。',
-    `<div class="loading-card"><div class="spin"></div><div style="color:var(--ink-2);font-size:14px">墨正在思考怎么帮你走得稳…</div></div>`));
-  const plan = await AI.goalDecompose(inputText.trim(), deadline);
-  // 展示拆解结果
-  const milestones = plan.milestones.map(m => `
-    <div class="milestone"><span class="m-dot"></span><div class="m-title">${m}<div class="m-why">里程碑 · 一段完成，就走完三分之一</div></div></div>`).join('');
-  const taskRows = plan.tasks.map((t, i) => `
-    <div class="decomp-task">
-      <span class="d-date">${Store.fmtMD(t.date)}</span>
-      <div>
-        ${esc(t.text)} <span style="color:var(--ink-2);font-size:11px">· ${t.estMin}分钟</span>
-        <span class="d-why">为什么：${esc(t.why)}</span>
+  const plan = GoalKB.decompose(inputText.trim(), {
+    cycleDays: App.goalForm.cycleDays || 14,
+    lifeStage: App.goalForm.stage || 'starter',
+    difficulty: App.goalForm.difficulty || 'medium'
+  });
+  App.pendingPlan = plan;
+  store.flags.goalInputLast = inputText.trim();
+  Store.save();
+
+  const phasesHtml = plan.phases.map(p => `
+    <div class="phase-card">
+      <div class="phase-head">
+        <span class="phase-name">${esc(p.name)}</span>
+        <span class="phase-dur">${p.duration}</span>
       </div>
-      <select data-idx="${i}" class="d-date-sel"></select>
+      <div class="phase-milestone">🏁 ${esc(p.milestone)}</div>
+      <div class="phase-tasks">
+        ${p.tasks.map(t => `<div class="ptask"><span class="ptask-day">Day ${t.day}</span><span class="ptask-text">${esc(t.text)}</span></div>`).join('')}
+      </div>
     </div>`).join('');
+  const freeDays = plan.freeDays.map(d => `Day ${d}`).join('、');
+  const first = plan.daily.find(d => d.tasks.length);
+  const second = plan.daily.find(d => d.day > (first ? first.day : 0) && d.tasks.length);
 
   openModal(modalShell(
-    '目标已拆解完成', '总任务估算 ' + plan.estimate + ' · 可用工作日 ' + plan.workdays + ' 天 · 每天工作量 ' + plan.daily,
-    `${milestones}${taskRows}
-     <div style="font-size:12px;color:var(--ink-2);margin-top:10px">可以调整每个任务的日期，或直接确认。每天最多3件，多了墨会帮你移到待办。</div>`,
+    '目标拆解结果',
+    `${esc(plan.title)} · ${plan.cycleLabel} · ${plan.difficultyName}难度`,
+    `
+    <div class="decomp-hero">
+      <div class="goal-progress"><div class="bar" style="width:0%"></div></div>
+      <div class="decomp-meta">共 ${plan.totalTasks} 件 · 每天≤${plan.maxDailyTasks}件 · 平均约 ${plan.avgMin} 分钟/天 · 自由日：${freeDays || '无'}</div>
+    </div>
+    ${phasesHtml}
+    ${first ? `
+    <div class="decomp-today">
+      <div class="dt-title">Day ${first.day} · 开始执行后的第一件任务</div>
+      ${first.tasks.map(t => `<div class="decomp-task"><span class="check"></span><div>${esc(t.text)} <span class="d-why">为什么：${esc(t.why || '让这一步更轻松')}</span></div></div>`).join('')}
+    </div>` : ''}
+    ${second ? `
+    <div class="decomp-next">
+      <div class="dt-title dim">Day ${second.day} · 第二件</div>
+      ${second.tasks.map(t => `<div class="decomp-task"><span class="check"></span><div>${esc(t.text)}</div></div>`).join('')}
+    </div>` : ''}
+    <div class="gf-tip">💜 每天≤3件、任务具体可执行、每件都写清「为什么」。自由日当天不安排任务，可以补进度或休息。</div>`,
     `<div class="modal-actions">
-      <button class="btn-ghost" data-action="modal:close">再想想</button>
-      <button class="btn-primary" data-action="goal:confirm">确认创建</button>
+      <button class="btn-ghost" data-action="goal:reselect">调整分配</button>
+      <button class="btn-primary" data-action="goal:confirm">确认，开始执行</button>
     </div>`
   ));
-
-  // 日期下拉：可选工作日
-  const weekdays = Store.listWeekdays(Store.todayStr(), plan.tasks.length + 3);
-  $$('.d-date-sel').forEach(sel => {
-    const idx = Number(sel.dataset.idx);
-    weekdays.forEach((d, di) => {
-      const o = document.createElement('option');
-      o.value = d; o.textContent = Store.fmtMD(d);
-      if (d === plan.tasks[idx].date) o.selected = true;
-      sel.appendChild(o);
-    });
-    sel.addEventListener('change', () => {
-      plan.tasks[idx].date = sel.value;
-      const label = sel.closest('.decomp-task').querySelector('.d-date');
-      if (label) label.textContent = Store.fmtMD(sel.value);
-    });
-  });
-
-  App.pendingGoal = { title: inputText.trim(), deadline, plan };
 }
 
-/* 目标详情 */
+/* 目标详情：三阶段 + 进度 + 今日/明日预览 */
 function openGoalDetail(id) {
   const store = Store.load();
   const g = store.goals.find(x => x.id === id);
@@ -1289,6 +1331,58 @@ function openGoalDetail(id) {
   const pct = total ? Math.round(done / total * 100) : 0;
   const leftDays = Math.ceil((new Date(g.deadline + 'T00:00:00') - new Date()) / 864e5);
 
+  /* 三阶段概览 */
+  let phasesHtml = '';
+  if (g.phases && g.phases.length) {
+    phasesHtml = g.phases.map((p, pi) => {
+      const all = g.tasks.filter(t => (t.phase === undefined ? pi === 0 : t.phase === pi));
+      const pd = all.filter(t => t.done).length;
+      const donePct = all.length ? Math.round(pd / all.length * 100) : 0;
+      const st = donePct >= 100 ? '✅ 已完成' : (pd > 0 ? '🔄 进行中' : '⏳ 未开始');
+      return `
+        <div class="phase-card sm">
+          <div class="phase-head">
+            <span class="phase-name">${esc(p.name)}</span>
+            <span class="phase-dur">${p.duration || ''}</span>
+            <span class="phase-st">${st}</span>
+          </div>
+          <div class="phase-milestone">🏁 ${esc(p.milestone || '')}</div>
+          <div class="phase-progress"><div class="bar" style="width:${donePct}%"></div></div>
+        </div>`;
+    }).join('');
+  }
+
+  /* 今日 / 明日预览（基于 startDate） */
+  let todayHtml = '';
+  if (g.startDate) {
+    const diff = Math.round((new Date(Store.todayStr() + 'T00:00:00') - new Date(g.startDate + 'T00:00:00')) / 864e5) + 1;
+    const todayDay = diff;
+    const freeDays = g.freeDays || [];
+    if (todayDay >= 1 && todayDay <= g.cycleDays) {
+      if (freeDays.includes(todayDay)) {
+        todayHtml = `<div class="decomp-today"><div class="dt-title">Day ${todayDay} · 自由日</div><div class="gf-tip">今天没有安排，可以补进度或者休息。</div></div>`;
+      } else {
+        const todayTasks = g.tasks.filter(t => t.day === todayDay);
+        if (todayTasks.length) {
+          todayHtml = `<div class="decomp-today"><div class="dt-title">Day ${todayDay} · 今日任务</div>
+            ${todayTasks.map(t => `
+              <div class="decomp-task" data-action="goal:task" data-tid="${t.id}">
+                <span class="check" style="${t.done ? 'background:var(--leaf,#7FB97A);border-color:var(--leaf,#7FB97A);color:#fff' : ''}">${t.done ? '🌱' : ''}</span>
+                <div style="flex:1">${esc(t.text)} <span class="d-why">为什么：${esc(t.why || '')}</span></div>
+              </div>`).join('')}</div>`;
+        }
+      }
+      const nextDay = todayDay + 1;
+      if (!freeDays.includes(nextDay) && nextDay <= g.cycleDays) {
+        const nextTasks = g.tasks.filter(t => t.day === nextDay);
+        if (nextTasks.length) {
+          todayHtml += `<div class="decomp-next"><div class="dt-title dim">Day ${nextDay} · 明日预览</div>
+            ${nextTasks.map(t => `<div class="decomp-task"><span class="check"></span><div>${esc(t.text)}</div></div>`).join('')}</div>`;
+        }
+      }
+    }
+  }
+
   const groups = {};
   g.tasks.forEach(t => { (groups[t.date] = groups[t.date] || []).push(t); });
   const dates = Object.keys(groups).sort((a, b) => a.localeCompare(b));
@@ -1296,6 +1390,9 @@ function openGoalDetail(id) {
   const body = `
     <div class="goal-progress" style="margin:14px 0 4px"><div class="bar" style="width:${pct}%"></div></div>
     <div style="font-size:13px;color:var(--ink-2);margin-bottom:14px">${pct}% · 剩余${Math.max(0, leftDays)}天 · ${done}/${total} 件完成</div>
+    ${phasesHtml}
+    ${todayHtml}
+    <div class="date-group-label" style="margin-top:6px">全部任务</div>
     ${dates.map(d => `
       <div class="date-group-label">${Store.fmtMD(d)} ${Store.fmtDOW(d)}</div>
       <div class="card" style="padding:8px">
@@ -1569,7 +1666,8 @@ function onClick(e) {
     case 'backlog:delete': doBacklogDelete(id); break;
     case 'backlog:discard': doBacklogDiscard(id); break;
     case 'goal:new': openNewGoal(); break;
-    case 'goal:decompose': doDecompose($('#goal-input').value, getSelectedDays()); break;
+    case 'goal:reselect': closeModal(); openNewGoal(Store.load().flags.goalInputLast || ''); break;
+    case 'goal:decompose': doDecompose($('#goal-input').value); break;
     case 'goal:confirm': confirmGoal(); break;
     case 'goal:detail': openGoalDetail(id); break;
     case 'goal:task': toggleGoalTask(btn.dataset.tid); break;
@@ -1613,11 +1711,6 @@ function onClick(e) {
   }
 }
 
-function getSelectedDays() {
-  const on = $('.chip.on');
-  return on ? Number(on.dataset.days) : 10;
-}
-
 /* ================= 动作实现 ================= */
 
 /* 状态签到：单个表情按钮点击后弹出三个选项供选择 */
@@ -1645,6 +1738,11 @@ function setMood(m) {
   Store.save();
   const ov = $('.sheet-overlay');
   if (ov) ov.remove();
+  /* 状态签到 → 任务量联动：😊 明日任务量 +1 件 */
+  if (m === '😊') {
+    store.flags.tomorrowBoost = Store.shiftDate(Store.todayStr(), 1);
+    Store.save();
+  }
   if (m === '😔' && prev !== '😔') {
     // 移1件到待办
     const undone = store.today.tasks.filter(t => !t.done);
@@ -1681,6 +1779,13 @@ function toggleTask(id, opts = {}) {
     const total = store.today.tasks.length;
     const remaining = total - doneCount;
     Store.save();
+    /* 目标 100% → 自动弹出归档确认 */
+    if (t.goalId) {
+      const g = store.goals.find(x => x.id === t.goalId);
+      if (g && g.tasks.length && g.tasks.every(x => x.done) && !(store.flags.archivedIds || []).includes(g.id)) {
+        setTimeout(() => openAchieveConfirm(g), 700);
+      }
+    }
     if (!opts.silent) {
       actionToast('已标记为完成', () => toggleTask(id, { silent: true }));
       if (remaining === 0) {
@@ -1861,22 +1966,47 @@ function taskToBacklog(id) {
   });
 }
 
-/* 目标 */
+/* 确认创建目标：展开每日任务，Day 1 自动进入今日 */
 function confirmGoal() {
-  const p = App.pendingGoal;
-  App.pendingGoal = null;
-  if (!p) return;
+  const plan = App.pendingPlan;
+  App.pendingPlan = null;
+  if (!plan) return;
   const store = Store.load();
+  const startDate = Store.todayStr();
+  const deadline = Store.shiftDate(startDate, plan.cycleDays - 1);
+  const tasks = [];
+  plan.daily.forEach(d => {
+    d.tasks.forEach(t => {
+      tasks.push({
+        id: Store.uid(), text: t.text, why: t.why, estMin: t.estMin,
+        day: d.day, date: Store.shiftDate(startDate, d.day - 1), done: false
+      });
+    });
+  });
   const g = {
-    id: Store.uid(), title: p.title, createdAt: Store.todayStr(), deadline: p.deadline,
-    archived: false, milestones: p.plan.milestones, tasks: p.plan.tasks
+    id: Store.uid(), title: plan.title, createdAt: Store.todayStr(),
+    startDate, deadline, archived: false,
+    templateId: plan.template ? plan.template.id : null,
+    templateName: plan.template ? plan.template.name : null,
+    lifeStage: plan.lifeStage, cycleDays: plan.cycleDays, difficulty: plan.difficulty,
+    totalTasks: plan.totalTasks, finishDay: plan.finishDay, freeDays: plan.freeDays,
+    phases: plan.phases.map(p => ({ name: p.name, duration: p.duration, milestone: p.milestone })),
+    milestones: plan.phases.map(p => p.milestone),
+    tasks
   };
   store.goals.push(g);
-  store.flags.goalJustDecomposed = p.title;
+  /* 数据联动：Day 1（今日）任务立即进入今日列表 */
+  const today = Store.todayStr();
+  tasks.filter(t => t.date === today && !t.done).forEach(t => {
+    if (!store.today.tasks.some(x => x.goalId === g.id && x.text === t.text)) {
+      store.today.tasks.push({ id: Store.uid(), text: t.text, estMin: t.estMin, priority: false, done: false, goalId: g.id, why: t.why || '' });
+    }
+  });
+  store.flags.goalJustDecomposed = plan.title;
   Store.save();
   closeModal();
   render();
-  aiToast('goal_created', {}, { fallback: '已创建目标。任务会按日期自动出现在“今日”。' });
+  aiToast('goal_created', {}, { fallback: '已创建目标，Day 1 的任务已放进「今日」。' });
 }
 
 function toggleGoalTask(tid) {

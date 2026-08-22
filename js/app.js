@@ -106,7 +106,7 @@ function renderHeader() {
     const greet = h < 11 ? '早安，今天。' : h < 18 ? '下午好，今天。' : '晚上好，今天。';
     $h.innerHTML = `
       <div class="header-inner">
-        <div>
+        <div class="greet-row">
           <div class="greet-title">${greet}</div>
           <div class="greet-date">${Store.fmtMD(today)} · ${Store.fmtDOW(today)}</div>
         </div>

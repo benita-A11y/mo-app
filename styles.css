@@ -1091,3 +1091,10 @@ html[data-theme="dark"] .inbox-item{background:rgba(255,255,255,.05)}
 @media(prefers-reduced-motion:reduce){
   *{animation-duration:.01ms !important;transition-duration:.01ms !important}
 }
+
+/* —— 友好细节补充样式 —— */
+.review-opener{font-size:14px;line-height:1.7;color:var(--ink);background:rgba(255,255,255,.55);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:8px 0}
+html[data-theme="dark"] .review-opener{background:rgba(255,255,255,.05)}
+.end-day-btn{display:block;width:100%;margin:10px 0 2px;padding:11px;border:none;border-radius:14px;background:rgba(212,184,217,.18);color:var(--ink);font-size:14px;font-weight:600;cursor:pointer}
+.end-day-btn:active{background:rgba(212,184,217,.32)}
+.roll-tag{font-size:11px;color:#7FB97A;background:rgba(127,185,122,.12);border-radius:8px;padding:1px 7px;margin-left:5px;vertical-align:1px}

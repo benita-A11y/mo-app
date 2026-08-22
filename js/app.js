@@ -436,8 +436,63 @@ function renderToday() {
       ${App.doneExpanded ? `<ul class="task-list">${doneTasks.map(taskRow).join('')}</ul>` : ''}
     </div>` : '';
 
+  /* —— 一站式首页 · 灵感箱（顶部随手捕捉，接住想法不打断） —— */
+  const inboxCapture = `
+    <section class="card home-inbox">
+      <div class="card-title">
+        <span class="t">✨ 灵感箱</span>
+        <span class="meta">想到什么，先写在这里</span>
+      </div>
+      <div class="inbox-row">
+        <input class="input inbox-input" id="home-inbox-input" placeholder="冒出什么想法？先记下来…">
+        <button class="btn inbox-save" data-action="home-inbox:add">存下</button>
+      </div>
+    </section>`;
+
+  /* —— 一站式首页 · 待办预览（今天可做 / 待安排） —— */
+  const blToday = store.backlog.filter(b => b.originalDate === Store.todayStr());
+  const blLater = store.backlog.filter(b => b.originalDate !== Store.todayStr());
+  const blMini = b => `<button class="home-bl-item" data-action="tab:switch" data-tab="backlog">
+      <span class="home-bl-txt">${esc(b.text)}</span>${b.estMin ? `<span class="home-bl-min">${b.estMin}分钟</span>` : ''}
+    </button>`;
+  const backlogPreview = store.backlog.length ? `
+    <section class="card home-backlog">
+      <div class="card-title">
+        <span class="t">📋 待办</span>
+        <span class="meta">共 ${store.backlog.length} 件</span>
+        <button class="mini-btn ghost" data-action="tab:switch" data-tab="backlog">全部</button>
+      </div>
+      ${blToday.length ? `<div class="home-bl-group"><div class="home-bl-label">今天可做 · ${blToday.length}</div>${blToday.slice(0, 3).map(blMini).join('')}</div>` : ''}
+      ${blLater.length ? `<div class="home-bl-group"><div class="home-bl-label">待安排 · ${blLater.length}</div>${blLater.slice(0, 3).map(blMini).join('')}</div>` : ''}
+    </section>` : '';
+
+  /* —— 一站式首页 · 目标进度（紧凑） —— */
+  const goalsCompact = (() => {
+    const active = store.goals.filter(g => !g.archived);
+    if (!active.length) return '';
+    const pctOf = g => g.tasks.length ? Math.round(g.tasks.filter(t => t.done).length / g.tasks.length * 100) : 0;
+    return `
+    <section class="card home-goals">
+      <div class="card-title">
+        <span class="t">🎯 目标进度</span>
+        <button class="mini-btn ghost" data-action="tab:switch" data-tab="goals">全部</button>
+      </div>
+      ${active.slice(0, 3).map(g => {
+        const pct = pctOf(g);
+        const leftDays = Math.ceil((new Date(g.deadline + 'T00:00:00') - new Date()) / 864e5);
+        return `<button class="home-goal" data-action="goal:detail" data-id="${g.id}">
+          <div class="home-goal-top"><span class="home-goal-name">${esc(g.title)}</span><span class="home-goal-pct">${pct}%</span></div>
+          <div class="goal-progress"><div class="bar" style="width:${pct}%"></div></div>
+          <div class="home-goal-sub">剩余 ${Math.max(0, leftDays)} 天</div>
+        </button>`;
+      }).join('')}
+    </section>`;
+  })();
+
   return `
     <div class="today-stack">
+      ${inboxCapture}
+      ${backlogPreview}
       ${p0Card}
 
       ${overviewBar}
@@ -467,6 +522,8 @@ function renderToday() {
       </div>
 
       ${fragCard}
+
+      ${goalsCompact}
 
       ${doneSection}
 
@@ -1616,7 +1673,11 @@ function bindEvents() {
 
   // 灵感箱：回车快速捕捉（事件委托，避免重复绑定）
   document.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && e.target && e.target.id === 'inbox-input') {
+    if (e.key !== 'Enter' || !e.target) return;
+    if (e.target.id === 'inbox-input') {
+      const v = e.target.value.trim();
+      if (v) { inboxAdd(v); e.target.value = ''; }
+    } else if (e.target.id === 'home-inbox-input') {
       const v = e.target.value.trim();
       if (v) { inboxAdd(v); e.target.value = ''; }
     }
@@ -1807,6 +1868,11 @@ function onClick(e) {
     case 'inbox:copy': inboxCopy(id); break;
     case 'inbox:focus': focusInbox(); break;
     case 'day:end': endToday(); break;
+    case 'home-inbox:add': {
+      const hinp = $('#home-inbox-input');
+      if (hinp && hinp.value.trim()) { inboxAdd(hinp.value); hinp.value = ''; }
+      break;
+    }
     case 'inbox:add': {
       const inp = $('#inbox-input');
       if (inp && inp.value.trim()) { inboxAdd(inp.value); inp.value = ''; }

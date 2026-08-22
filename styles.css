@@ -1098,3 +1098,33 @@ html[data-theme="dark"] .review-opener{background:rgba(255,255,255,.05)}
 .end-day-btn{display:block;width:100%;margin:10px 0 2px;padding:11px;border:none;border-radius:14px;background:rgba(212,184,217,.18);color:var(--ink);font-size:14px;font-weight:600;cursor:pointer}
 .end-day-btn:active{background:rgba(212,184,217,.32)}
 .roll-tag{font-size:11px;color:#7FB97A;background:rgba(127,185,122,.12);border-radius:8px;padding:1px 7px;margin-left:5px;vertical-align:1px}
+
+/* —— 一站式首页 · 灵感箱 / 待办预览 / 目标进度 紧凑区 —— */
+.home-inbox .inbox-row{margin-top:10px}
+.home-backlog .card-title, .home-goals .card-title{display:flex;align-items:center;gap:8px}
+.home-backlog .card-title .meta, .home-goals .card-title .meta{margin-right:auto}
+.home-backlog .mini-btn.ghost, .home-goals .mini-btn.ghost{margin-left:0}
+.home-bl-group{margin-top:6px}
+.home-bl-label{font-size:12px;color:var(--ink-2);margin:8px 2px 4px}
+.home-bl-item{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;
+  text-align:left;background:rgba(255,255,255,.5);border:.5px solid var(--line);
+  border-radius:12px;padding:10px 12px;margin:6px 0;cursor:pointer;
+  transition:transform .15s var(--ease), background .2s var(--ease);
+}
+.home-bl-item:active{transform:scale(.99)}
+html[data-theme="dark"] .home-bl-item{background:rgba(255,255,255,.05)}
+.home-bl-txt{font-size:14px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.home-bl-min{font-size:12px;color:var(--ink-2);flex:none;margin-left:8px}
+.home-goal{
+  display:block;width:100%;text-align:left;background:rgba(255,255,255,.5);
+  border:.5px solid var(--line);border-radius:14px;padding:12px 14px;margin:8px 0;cursor:pointer;
+  transition:transform .15s var(--ease), background .2s var(--ease);
+}
+.home-goal:active{transform:scale(.99)}
+html[data-theme="dark"] .home-goal{background:rgba(255,255,255,.05)}
+.home-goal-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.home-goal-name{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.home-goal-pct{font-size:13px;color:var(--accent);font-weight:600;flex:none;margin-left:8px}
+.home-goal .goal-progress{height:8px}
+.home-goal-sub{font-size:12px;color:var(--ink-2);margin-top:6px}

@@ -84,20 +84,18 @@ input,select,textarea{font-family:var(--font);color:var(--ink)}
 .header-inner{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .greet-title{font-size:23px;font-weight:700;letter-spacing:-.3px;line-height:1.25}
 .greet-date{margin-top:2px;font-size:13px;color:var(--ink-2)}
-/* 非首页：小程序式居中标题导航栏 */
-.header-inner.centered{position:relative;align-items:center;padding:6px 0 10px}
+/* 非首页：小程序式居中标题导航栏（标题与副标题分层，不重叠） */
+.header-inner.centered{position:relative;align-items:center;justify-content:center;flex-direction:column;gap:6px;padding:28px 0 18px}
 .header-inner.centered .greet-title{
-  position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
-  text-align:center;font-size:17px;font-weight:600;letter-spacing:0;line-height:1;
+  text-align:center;font-size:20px;font-weight:700;letter-spacing:-.2px;line-height:1.2;
   pointer-events:none;
 }
 /* 非首页副标题：标题下方一行总览（如「进行中 2 个 · 已完成 3 个」） */
 .header-inner.centered .greet-sub{
-  position:absolute;left:0;right:0;top:calc(50% + 11px);transform:translateY(-50%);
-  text-align:center;font-size:11.5px;color:var(--ink-2);pointer-events:none;
+  text-align:center;font-size:12.5px;color:var(--ink-2);pointer-events:none;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.header-inner.centered .header-tools{position:relative;z-index:1;margin-left:auto}
+.header-inner.centered .header-tools{position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:1}
 .header-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .icon-btn{
   width:34px;height:34px;border-radius:50%;
@@ -175,8 +173,8 @@ html[data-theme="dark"] .card{border-color:rgba(255,255,255,.07)}
 .card-sub{font-size:13px;color:var(--ink-2);margin-bottom:14px}
 
 /* ============ 今日核心目标（P0 置顶） ============ */
-.p0-card{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(255,247,251,.78));border:1px solid var(--line);box-shadow:var(--shadow-card)}
-html[data-theme="dark"] .p0-card{background:linear-gradient(135deg,rgba(40,36,44,.92),rgba(54,42,54,.85))}
+.p0-card{position:relative;overflow:hidden;background:linear-gradient(135deg,#F3EDF5,#F8F1F9);border:1px solid rgba(212,184,217,.3);box-shadow:0 2px 12px rgba(74,63,92,.06)}
+html[data-theme="dark"] .p0-card{background:linear-gradient(135deg,#2C2830,#352A38)}
 .p0-card .card-title .t{color:var(--accent)}
 .p0-item{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-top:8px;border-radius:var(--radius-md);background:rgba(255,255,255,.6);border:.5px solid var(--line)}
 html[data-theme="dark"] .p0-item{background:rgba(255,255,255,.05)}
@@ -188,8 +186,8 @@ html[data-theme="dark"] .p0-item{background:rgba(255,255,255,.05)}
 }
 .p0-check:active{transform:scale(.85)}
 .p0-body{flex:1;min-width:0}
-.p0-text{font-size:15px;font-weight:600;display:block}
-.p0-why{display:block;font-size:12px;color:var(--ink-2);margin-top:2px}
+.p0-text{font-size:18px;font-weight:700;display:block;letter-spacing:-.2px}
+.p0-why{display:block;font-size:14px;color:#8E8E93;margin-top:3px;line-height:1.55}
 .p0-min{flex-shrink:0;font-size:12px;color:var(--ink-2);background:rgba(0,0,0,.05);padding:3px 10px;border-radius:99px}
 html[data-theme="dark"] .p0-min{background:rgba(255,255,255,.08)}
 .p0-empty{padding-bottom:16px}
@@ -353,8 +351,8 @@ html[data-theme="dark"] .today-bottom .quick-ic{background:rgba(255,255,255,.06)
 .today-bottom .quick-ic .qi-lb{font-size:10px;color:var(--ink-2);font-weight:500;line-height:1}
 
 /* 待办页 & 目标页 & 复盘页 通用 */
-.page-stack{display:flex;flex-direction:column;gap:12px}
-.section-label{font-size:13px;color:var(--ink-2);font-weight:600;letter-spacing:.5px;margin:8px 4px 4px}
+.page-stack{display:flex;flex-direction:column;gap:14px;padding-top:14px}
+.section-label{font-size:13px;color:var(--ink-2);font-weight:600;letter-spacing:.5px;margin:6px 4px 4px}
 
 /* ============ 待办页 ============ */
 .remind-card{
@@ -525,17 +523,17 @@ html[data-theme="dark"] .month-timeline .cell{background:rgba(255,255,255,.05)}
 
 /* ============ AI 气泡 ============ */
 .ai-bubble{
-  background:rgba(255,255,255,.65);
+  background:rgba(255,255,255,.75);
   backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);
   border:.5px solid rgba(212,184,217,.15);
   border-radius:16px;
-  box-shadow:0 2px 16px rgba(74,63,92,.04);
-  padding:14px 16px;max-width:min(320px,90%);
+  box-shadow:0 2px 12px rgba(74,63,92,.08);
+  padding:14px 18px;max-width:min(340px,80%);
   font-size:15px;line-height:1.6;color:#1C1C1E;
   position:relative;animation:bubbleIn .3s var(--ease);
 }
 html[data-theme="dark"] .ai-bubble{
-  background:rgba(44,40,49,.8);color:#F2EFF5;border-color:rgba(255,255,255,.1);
+  background:rgba(44,40,49,.78);color:#F2EFF5;border-color:rgba(255,255,255,.1);
 }
 /* 左下角尾巴：12×8 三角，圆角 1px */
 .ai-bubble::before{
@@ -956,6 +954,16 @@ html[data-theme="dark"] .today-stack .task-meta .hint{color:#A6A0AE}
   text-align:center;font-size:13px;color:var(--ink-2);margin-top:22px;
   letter-spacing:.5px;font-weight:300;opacity:.7;
 }
+
+/* 今日页 · 低调的「结束今天」入口（不在底部操作栏抢戏） */
+.end-day-ghost{
+  align-self:flex-start;margin-top:14px;
+  background:none;border:none;cursor:pointer;
+  font-size:13px;color:var(--ink-2);padding:6px 2px;
+  display:inline-flex;align-items:center;gap:4px;transition:color .2s var(--ease);
+}
+.end-day-ghost:active{color:var(--accent)}
+html[data-theme="dark"] .end-day-ghost{color:#A6A0AE}
 
 /* ============ 灵感箱 ============ */
 /* 待办/灵感箱页小程序化：紧凑卡片、浅色层次 */

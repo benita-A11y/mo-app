@@ -102,12 +102,14 @@ function renderHeader() {
   const today = Store.todayStr();
   if (App.tab === 'today') {
     const h = new Date().getHours();
+    const undoneN = store.today.tasks.filter(t => !t.done).length;
     const greet = h < 11 ? '早安，今天。' : h < 18 ? '下午好，今天。' : '晚上好，今天。';
     $h.innerHTML = `
       <div class="header-inner">
         <div>
           <div class="greet-title">${greet}</div>
           <div class="greet-date">${Store.fmtMD(today)} · ${Store.fmtDOW(today)}</div>
+          ${undoneN ? `<div class="greet-sub">今天有 ${undoneN} 件事</div>` : ''}
         </div>
         <div class="header-tools">
           <button class="mood-single" data-action="mood:open" title="点我签到今日状态">${store.today.status || '😊'}</button>
@@ -247,18 +249,22 @@ function acceptAllRoutes() {
   aiToast('all_routes', { n: list.length });
 }
 
-/** 弹出槽位选择器（调整时间） */
+/** 「调整」按钮：系统自动匹配其他时间并给出原因（无需手动挑选） */
 function adjustSlot(id) {
   const store = Store.load();
   const t = store.today.tasks.find(x => x.id === id);
   if (!t) return;
   const slots = AI.buildSlots(Store.todayStr()).filter(s => s.type !== 'lesson');
-  const chips = slots.map(s => `
-    <button class="slot-pick ${t.slot === s.key ? 'on' : ''}" data-action="slot:pick" data-slot="${s.key}" data-id="${id}">
-      <span class="sp-time">${s.time}</span>
-      <span class="sp-label">${s.label}</span>
-    </button>`).join('');
-  openModal(modalShell('调整时间', '选一个更顺手的时段；也可以直接拖拽卡片调整顺序', `<div class="slot-grid">${chips}</div>`));
+  if (!slots.length) return;
+  const cur = slots.findIndex(s => s.key === t.slot);
+  const next = slots[(cur + 1) % slots.length];
+  t.slot = next.key;
+  t.matched = true;
+  if (t.doing) t.doing = false;
+  Store.save();
+  render();
+  const reason = next.hint || '这个时间更顺手';
+  aiToast('slot_rematched', { task: t.text, slot: next.label, reason });
 }
 
 /** 拖拽排序：把任务移到目标任务所在位置，并跟随其槽位 */
@@ -468,6 +474,7 @@ function renderToday() {
         <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
           📋 待办 <span class="n">${store.backlog.length}</span> 件
         </button>
+        <button class="end-day-btn" data-action="day:end">🌙 结束今天</button>
         <button class="quick-ic" data-action="camera:open" title="拍照识别" aria-label="拍照识别">
           <span class="qi-ic">📷</span><span class="qi-lb">拍照</span>
         </button>
@@ -654,7 +661,7 @@ function renderBacklog() {
           <li class="task" data-action="backlog:detail" data-id="${b.id}" title="点击查看详情 · 左滑或长按可操作">
             <span class="check"></span>
             <div class="task-body">
-              <span class="task-text">${esc(b.text)}${frag}${b.priority ? ' <span class="prio-tag">优先</span>' : ''}</span>
+              <span class="task-text">${esc(b.text)}${frag}${b.originalDate !== Store.todayStr() ? ' <span class="roll-tag">🍃 顺延</span>' : ''}${b.priority ? ' <span class="prio-tag">优先</span>' : ''}</span>
               <span class="task-meta">${b.estMin ? `${b.estMin}分钟` : '未估时'}</span>
             </div>
             <span class="flag"></span>
@@ -881,6 +888,15 @@ function renderGoals() {
 }
 
 /* ================= 复盘页 ================= */
+function reviewOpener(r) {
+  if (r.fullAttendance) return '这周你一天都没落下，节奏是稳稳的。';
+  if (r.total === 0) return '这一周你走得很轻，没关系，存在本身就有意义。';
+  return '这周你有快有慢，但一直没停下来。';
+}
+function monthOpener(m) {
+  if (m.total === 0) return '这个月你走得很轻，没关系，休养也是进度。';
+  return '这一个月，你按自己的节奏，把一件件小事安放好了。';
+}
 function renderReview() {
   const seg = `
     <div class="seg-control">
@@ -918,6 +934,7 @@ function renderReview() {
     return `
       <div class="page-stack">
         ${seg}
+        <div class="review-opener">${reviewOpener(r)}</div>
         <div class="big-stat">
           <div class="v">${r.total}</div>
           <div class="l">本周完成（最近7天）</div>
@@ -973,6 +990,7 @@ function renderReview() {
   return `
     <div class="page-stack">
       ${seg}
+      <div class="review-opener">${monthOpener(m)}</div>
       <div class="big-stat">
         <div class="v">${m.total}</div>
         <div class="l">本月完成</div>
@@ -1788,6 +1806,7 @@ function onClick(e) {
     case 'inbox:del': inboxDel(id); break;
     case 'inbox:copy': inboxCopy(id); break;
     case 'inbox:focus': focusInbox(); break;
+    case 'day:end': endToday(); break;
     case 'inbox:add': {
       const inp = $('#inbox-input');
       if (inp && inp.value.trim()) { inboxAdd(inp.value); inp.value = ''; }
@@ -1838,16 +1857,33 @@ function setMood(m) {
     // 移1件到待办
     const undone = store.today.tasks.filter(t => !t.done);
     if (undone.length > 1) {
-      const moved = undone[undone.length - 1];
-      store.backlog.unshift({ id: Store.uid(), text: moved.text, estMin: moved.estMin, priority: moved.priority, originalDate: Store.todayStr(), why: moved.why || '' });
-      store.today.tasks = store.today.tasks.filter(t => t.id !== moved.id);
+      const kept = undone.find(t => t.priority) || undone[0];
+      undone.filter(t => t.id !== kept.id).forEach(t => {
+        store.backlog.unshift({ id: Store.uid(), text: t.text, estMin: t.estMin, priority: t.priority, originalDate: Store.todayStr(), why: t.why || '' });
+        store.today.tasks = store.today.tasks.filter(x => x.id !== t.id);
+      });
       Store.save();
-      aiToast('task_moved_out', { task: moved.text });
-    } else {
-      aiToast('mood_low');
     }
+    aiToast('mood_low');
   }
   render();
+}
+
+function endToday() {
+  const store = Store.load();
+  const doneCount = store.today.tasks.filter(t => t.done).length;
+  const planned = store.today.tasks.length;
+  const prevDate = store.todayDate;
+  store.dayLog[prevDate] = { done: doneCount, planned, mood: store.today.status || '😐' };
+  store.today.tasks.filter(t => !t.done).forEach(t => {
+    store.backlog.unshift({ id: Store.uid(), text: t.text, estMin: t.estMin, priority: t.priority, originalDate: prevDate, why: t.why || '' });
+  });
+  const next = Store.shiftDate(prevDate, 1);
+  store.today = { status: null, tasks: assembleDay(next) };
+  store.todayDate = next;
+  Store.save();
+  render();
+  aiToast('day_end', { D: doneCount, T: planned });
 }
 
 function toggleTask(id, opts = {}) {
@@ -1878,7 +1914,7 @@ function toggleTask(id, opts = {}) {
       }
     }
     if (!opts.silent) {
-      actionToast('已标记为完成', () => toggleTask(id, { silent: true }));
+      actionToast('✨已完成，真棒。', () => toggleTask(id, { silent: true }));
       if (remaining === 0) {
         setTimeout(() => aiToast('all_done'), 400);
         if (total >= 5) setTimeout(() => aiToast('over_done', { total }, { wide: true }), 1800);

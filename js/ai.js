@@ -505,7 +505,7 @@ c) drop：不值得记录
       case 'evening':
         return `今天已完成${D}件，还剩${T - D}件。睡前可以拍个复盘。`;
       case 'mood_low':
-        return '今天状态偏低。我已把1件事移到了待办。你不需要每天都很强。';
+        return '你不需要每天都很有力量。今天我只帮你留了1件最重要的事，做完就休息。';
       case 'all_done':
         return '今日已完成。';
       case 'streak3':
@@ -527,7 +527,7 @@ c) drop：不值得记录
       case 'goal_created':
         return `已为你创建目标。我会陪着你一步步走。`;
       case 'backlog_7d':
-        return `"${ctx.task}"已在待办里放了7天。要重新安排，还是删除？`;
+        return `"${ctx.task}"在待办里放了7天。如果已经不重要了，可以移除；如果还在意，我可以帮你重新安排。`;
       case 'backlog_3d':
         return `"${ctx.task}"在待办里放了3天，还需要它吗？`;
       case 'backlog_restored':
@@ -539,7 +539,7 @@ c) drop：不值得记录
       case 'ocr_committed':
         return `已把 ${ctx.n ?? ''}件任务放进待办。拍得不错。`;
       case 'day_end':
-        return '今日已完成。明天见。';
+        return `今天完成了${ctx.D}件，剩余${ctx.T - ctx.D}件顺延到了明天。今天辛苦了。`;
       case 'task_moved_out':
         return `状态偏低时不用硬撑。已把"${ctx.task}"移到待办，明天再排回来就好。`;
       case 'review_saved':
@@ -550,8 +550,10 @@ c) drop：不值得记录
         return `好，已把"${ctx.task}"安排在${ctx.slot}。出门顺手就办了，不用多走一步。`;
       case 'all_routes':
         return `已把 ${ctx.n} 件事嵌进今天的时间线，都是顺路的。`;
+      case 'slot_rematched':
+        return `已为"${ctx.task}"换到${ctx.slot}：${ctx.reason}。`;
       case 'inbox_captured':
-        return '先记下了。等你有空，我帮你分分类。';
+        return '已存入，待办里见。';
       case 'inbox_today':
         return `已把"${ctx.task}"排进${ctx.slot}${ctx.reason ? '：' + ctx.reason : ''}。`;
       case 'inbox_backlog':

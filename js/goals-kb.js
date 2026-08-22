@@ -420,7 +420,33 @@ const GoalKB = (() => {
     { id: 'ideal-home',   name: '打造理想的家',  keywords: ['理想的家','家居','布置','改造','温馨的家','家装风格'],       domain: 'life', defaultWeeks: 4 },
     { id: 'minimalism',   name: '极简整理',      keywords: ['极简','整理','断舍离','收纳','清理','扔东西'],              domain: 'life', defaultWeeks: 2 },
     { id: 'routine',      name: '建立作息习惯',  keywords: ['晨间','晚间','routine','作息','习惯','早睡早起','打卡'],    domain: 'life', defaultWeeks: 2 },
-    { id: 'self-care',    name: '学会自我照顾',  keywords: ['自我照顾','照顾自己','独处','放松','爱自己','休息'],        domain: 'life', defaultWeeks: 3 }
+    { id: 'self-care',    name: '学会自我照顾',  keywords: ['自我照顾','照顾自己','独处','放松','爱自己','休息'],        domain: 'life', defaultWeeks: 3 },
+    /* ---- 增补：更多细分可能性 ---- */
+    { id: 'teacher-cert', name: '考教师资格证', keywords: ['教资','教师资格','教师证','教资笔试','教资面试'], domain: 'study', defaultWeeks: 4 },
+    { id: 'learn-car',    name: '学车考驾照',   keywords: ['学车','驾照','考驾照','练车','科目二','科目三'], domain: 'life', defaultWeeks: 3 },
+    { id: 'diet-plan',    name: '规划减脂餐',   keywords: ['减脂餐','健康饮食','减脂','吃瘦','饮食计划','轻食'], domain: 'health', defaultWeeks: 3 },
+    { id: 'mindful-eat',  name: '正念饮食',     keywords: ['正念饮食','不暴食','情绪性进食','好好吃饭','饮食觉察'], domain: 'mind', defaultWeeks: 3 },
+    { id: 'nomad',        name: '成为数字游民', keywords: ['数字游民','远程工作','location independent','旅居办公','线上收入'], domain: 'career', defaultWeeks: 4 },
+    { id: 'civil-servant-prep', name: '考编',   keywords: ['考编','事业编','教师编','国企','编制'], domain: 'study', defaultWeeks: 4 },
+    { id: 'podcast',      name: '做播客',       keywords: ['播客','podcast','音频','电台','声音节目'], domain: 'skill', defaultWeeks: 3 },
+    { id: 'home-workout', name: '居家健身',     keywords: ['居家健身','在家锻炼','无器械','跟练','居家运动'], domain: 'health', defaultWeeks: 3 },
+    { id: 'parenting',    name: '科学育儿',     keywords: ['育儿','带娃','亲子','宝宝','孩子教育','科学育儿'], domain: 'family', defaultWeeks: 4 },
+    { id: 'pet-care',     name: '养好宠物',     keywords: ['养猫','养狗','宠物','毛孩子','宠物健康'], domain: 'life', defaultWeeks: 3 },
+    { id: 'gardening',    name: '阳台园艺',     keywords: ['园艺','种花','养绿植','阳台菜园','种菜','绿植'], domain: 'life', defaultWeeks: 3 },
+    { id: 'minimal-wardrobe', name: '极简穿搭', keywords: ['极简穿搭','胶囊衣橱','断舍离衣服','衣橱整理','少买衣服'], domain: 'life', defaultWeeks: 2 },
+    { id: 'bullet-journal', name: '玩转手帐',   keywords: ['手帐','bullet journal','拼贴','日程本','记录美化'], domain: 'skill', defaultWeeks: 2 },
+    { id: 'read-more',    name: '养成阅读习惯', keywords: ['读书','阅读','看书','每年读','共读','读纸质书'], domain: 'skill', defaultWeeks: 3 },
+    { id: 'side-writing', name: '自媒体写作',   keywords: ['自媒体','公众号','小红书','内容创作','博主','涨粉'], domain: 'skill', defaultWeeks: 3 },
+    { id: 'gratitude',    name: '练习感恩',     keywords: ['感恩','感谢日记','幸福感','积极心理','三件好事'], domain: 'mind', defaultWeeks: 3 },
+    { id: 'public-speak', name: '提升表达力',   keywords: ['公众演讲','演讲','表达力','汇报','presentation','口才'], domain: 'social', defaultWeeks: 3 },
+    { id: 'save-emergency', name: '攒第一桶金', keywords: ['第一桶金','攒第一万','启动资金','存第一笔','小目标储蓄'], domain: 'finance', defaultWeeks: 4 },
+    { id: 'debt-plan',    name: '理性消费',     keywords: ['理性消费','不乱买','消费观','剁手','冲动消费'], domain: 'finance', defaultWeeks: 3 },
+    { id: 'language-hsk', name: '汉语水平考试', keywords: ['hsk','汉语','普通话','二甲','普通话考试'], domain: 'study', defaultWeeks: 3 },
+    { id: 'draw-manga',   name: '画漫画',       keywords: ['漫画','画漫画','分镜','人设','二次元','条漫'], domain: 'skill', defaultWeeks: 4 },
+    { id: 'bake',         name: '精进烘焙',     keywords: ['烘焙','面包','蛋糕','做面包','烤箱','甜点'], domain: 'skill', defaultWeeks: 3 },
+    { id: 'travel-japan', name: '日本自由行',   keywords: ['日本','东京','大阪','日本旅行','赴日','霓虹'], domain: 'travel', defaultWeeks: 3 },
+    { id: 'volunteer',    name: '做志愿者',     keywords: ['志愿','公益','义工','做义工','志愿活动','助人'], domain: 'social', defaultWeeks: 3 },
+    { id: 'inner-peace',  name: '内心安定',     keywords: ['内心平静','焦虑缓解','安定','不内耗','情绪稳定'], domain: 'mind', defaultWeeks: 3 }
   ];
 
   /* ================= 关键词匹配 =================

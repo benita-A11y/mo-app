@@ -78,16 +78,18 @@ input,select,textarea{font-family:var(--font);color:var(--ink)}
 
 /* ============ Header ============ */
 #app-header{
-  padding:calc(12px + env(safe-area-inset-top)) 0 12px;
+  padding:calc(6px + env(safe-area-inset-top)) 0 0;
   animation:riseIn .45s var(--ease);
 }
-.header-inner{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.greet-title{font-size:23px;font-weight:700;letter-spacing:-.3px;line-height:1.25}
-.greet-date{margin-top:2px;font-size:13px;color:var(--ink-2)}
+/* 今日页头部：紧凑、同行、标题底部留 10px 接内容 */
+.header-inner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:nowrap;padding-bottom:10px}
+.greet-title{font-size:19px;font-weight:600;letter-spacing:-.2px;line-height:1.2}
+.greet-date{font-size:12.5px;color:var(--ink-2);margin-left:8px;white-space:nowrap}
+.header-inner .greet-row{display:flex;align-items:baseline;flex-wrap:nowrap;min-width:0}
 /* 非首页：小程序式居中标题导航栏（标题与副标题分层，不重叠） */
-.header-inner.centered{position:relative;align-items:center;justify-content:center;flex-direction:column;gap:6px;padding:28px 0 18px}
+.header-inner.centered{position:relative;align-items:center;justify-content:center;flex-direction:column;gap:6px;padding:16px 0 12px}
 .header-inner.centered .greet-title{
-  text-align:center;font-size:20px;font-weight:700;letter-spacing:-.2px;line-height:1.2;
+  text-align:center;font-size:19px;font-weight:600;letter-spacing:-.2px;line-height:1.2;
   pointer-events:none;
 }
 /* 非首页副标题：标题下方一行总览（如「进行中 2 个 · 已完成 3 个」） */
@@ -294,7 +296,7 @@ html[data-theme="dark"] .frag-item{background:rgba(255,255,255,.06)}
 .frag-acts .mini-btn{padding:5px 11px;font-size:12px}
 
 /* ============ 今日页 ============ */
-.today-stack{display:flex;flex-direction:column;gap:12px}
+.today-stack{display:flex;flex-direction:column;gap:12px;padding-top:8px}
 .ai-hero{display:flex;gap:10px;align-items:flex-end;justify-content:flex-start;animation:riseIn .5s var(--ease)}
 .ai-hero.right{justify-content:flex-end}
 .ai-avatar{

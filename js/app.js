@@ -109,7 +109,6 @@ function renderHeader() {
         <div>
           <div class="greet-title">${greet}</div>
           <div class="greet-date">${Store.fmtMD(today)} · ${Store.fmtDOW(today)}</div>
-          ${undoneN ? `<div class="greet-sub">今天有 ${undoneN} 件事</div>` : ''}
         </div>
         <div class="header-tools">
           <button class="mood-single" data-action="mood:open" title="点我签到今日状态">${store.today.status || '😊'}</button>
@@ -368,40 +367,21 @@ function renderToday() {
 
   const hero = aiHero();
 
-  // 待办3天未选提醒
-  let backlogHint = '';
-  const stale3d = store.backlog.filter(b => {
-    const days = (new Date(Store.todayStr()) - new Date(b.originalDate + 'T00:00:00')) / 864e5;
-    return days >= 3 && days < 7;
-  });
-  if (stale3d.length && !store.flags.staleShown) {
-    backlogHint = stale3d.map(b => `
-      <div class="remind-card" style="margin-top:2px">
-        <span>${AI.copy('backlog_3d', { task: b.text })}</span>
-        <div class="acts">
-          <button data-action="backlog:restore" data-id="${b.id}">排进今日</button>
-          <button class="ghost" data-action="backlog:discard" data-id="${b.id}">不需要</button>
-        </div>
-      </div>`).join('');
-    store.flags.staleShown = true;
-    Store.save();
-  }
-
-  const suggest = AI.suggestTomorrow();
-  // ② 今日核心目标：优先任务置顶，一眼看到今天最重要的事
+  // ② 今日核心目标：只显示1件最重要的事，柔和底色聚焦执行
   const prioUndone = undone.filter(t => t.priority);
+  const p0 = prioUndone[0];
   const p0Card = `
-    <section class="card p0-card${prioUndone.length ? '' : ' p0-empty'}">
+    <section class="card p0-card${p0 ? '' : ' p0-empty'}">
       <div class="card-title"><span class="t">⭐ 今日核心目标</span></div>
-      ${prioUndone.length ? prioUndone.map(t => `
+      ${p0 ? `
         <div class="p0-item">
-          <button class="p0-check" data-action="task:check" data-id="${t.id}" aria-label="完成"></button>
+          <button class="p0-check" data-action="task:check" data-id="${p0.id}" aria-label="完成"></button>
           <div class="p0-body">
-            <span class="p0-text">${esc(t.text)}</span>
-            ${t.why ? `<span class="p0-why">${esc(t.why)}</span>` : ''}
+            <span class="p0-text">${esc(p0.text)}</span>
+            ${p0.why ? `<span class="p0-why">${esc(p0.why)}</span>` : ''}
           </div>
-          ${t.estMin ? `<span class="p0-min">${t.estMin}分钟</span>` : ''}
-        </div>`).join('') : `
+          ${p0.estMin ? `<span class="p0-min">${p0.estMin}分钟</span>` : ''}
+        </div>` : `
         <div class="p0-empty-txt">今天没有标记优先的事，挑一件最想先完成的就好。</div>`}
     </section>`;
 
@@ -417,14 +397,12 @@ function renderToday() {
     ? `<button class="mini-btn ghost" data-action="skeleton:today" style="margin-left:auto">今日微调</button>`
     : '';
 
-  // ③ 今日概览：总量一行 + 明日建议小字（LLM 个性化方案注入下方）
+  // ③ 今日概览：总量一行（X件·预计X分钟·剩余空闲X分钟），聚焦执行
   const overviewBar = `
     <div class="task-bar task-bar-tl">
       <div class="stats"><strong>${undone.length}件</strong> · 预计 ${totalMin} 分钟 · 剩余空闲 ${freeMin} 分钟</div>
       ${todaySkelBtn}
-    </div>
-    <div class="overview-sub">🌙 明日建议 ${suggest.count} 件${suggest.weekend ? ' · 周末' : ''} · 基于你最近的节奏</div>
-    <div id="tomorrow-note"></div>`;
+    </div>`;
 
   // ⑦ 已完成区块（默认折叠，点击展开）
   const doneSection = doneTasks.length ? `
@@ -436,76 +414,22 @@ function renderToday() {
       ${App.doneExpanded ? `<ul class="task-list">${doneTasks.map(taskRow).join('')}</ul>` : ''}
     </div>` : '';
 
-  /* —— 一站式首页 · 灵感箱（顶部随手捕捉，接住想法不打断） —— */
-  const inboxCapture = `
-    <section class="card home-inbox">
-      <div class="card-title">
-        <span class="t">✨ 灵感箱</span>
-        <span class="meta">想到什么，先写在这里</span>
-      </div>
-      <div class="inbox-row">
-        <input class="input inbox-input" id="home-inbox-input" placeholder="冒出什么想法？先记下来…">
-        <button class="btn inbox-save" data-action="home-inbox:add">存下</button>
-      </div>
-    </section>`;
-
-  /* —— 一站式首页 · 待办预览（今天可做 / 待安排） —— */
-  const blToday = store.backlog.filter(b => b.originalDate === Store.todayStr());
-  const blLater = store.backlog.filter(b => b.originalDate !== Store.todayStr());
-  const blMini = b => `<button class="home-bl-item" data-action="tab:switch" data-tab="backlog">
-      <span class="home-bl-txt">${esc(b.text)}</span>${b.estMin ? `<span class="home-bl-min">${b.estMin}分钟</span>` : ''}
-    </button>`;
-  const backlogPreview = store.backlog.length ? `
-    <section class="card home-backlog">
-      <div class="card-title">
-        <span class="t">📋 待办</span>
-        <span class="meta">共 ${store.backlog.length} 件</span>
-        <button class="mini-btn ghost" data-action="tab:switch" data-tab="backlog">全部</button>
-      </div>
-      ${blToday.length ? `<div class="home-bl-group"><div class="home-bl-label">今天可做 · ${blToday.length}</div>${blToday.slice(0, 3).map(blMini).join('')}</div>` : ''}
-      ${blLater.length ? `<div class="home-bl-group"><div class="home-bl-label">待安排 · ${blLater.length}</div>${blLater.slice(0, 3).map(blMini).join('')}</div>` : ''}
-    </section>` : '';
-
-  /* —— 一站式首页 · 目标进度（紧凑） —— */
-  const goalsCompact = (() => {
-    const active = store.goals.filter(g => !g.archived);
-    if (!active.length) return '';
-    const pctOf = g => g.tasks.length ? Math.round(g.tasks.filter(t => t.done).length / g.tasks.length * 100) : 0;
-    return `
-    <section class="card home-goals">
-      <div class="card-title">
-        <span class="t">🎯 目标进度</span>
-        <button class="mini-btn ghost" data-action="tab:switch" data-tab="goals">全部</button>
-      </div>
-      ${active.slice(0, 3).map(g => {
-        const pct = pctOf(g);
-        const leftDays = Math.ceil((new Date(g.deadline + 'T00:00:00') - new Date()) / 864e5);
-        return `<button class="home-goal" data-action="goal:detail" data-id="${g.id}">
-          <div class="home-goal-top"><span class="home-goal-name">${esc(g.title)}</span><span class="home-goal-pct">${pct}%</span></div>
-          <div class="goal-progress"><div class="bar" style="width:${pct}%"></div></div>
-          <div class="home-goal-sub">剩余 ${Math.max(0, leftDays)} 天</div>
-        </button>`;
-      }).join('')}
-    </section>`;
-  })();
+  // 灵感箱 / 待办 / 目标进度已分别归属「待办页 / 目标页」；今日页只聚焦「今天要做什么」
 
   return `
     <div class="today-stack">
-      ${inboxCapture}
-      ${backlogPreview}
+
+      ${hero}
+
       ${p0Card}
 
       ${overviewBar}
-
-      ${hero}
 
       ${pendingCount ? `
         <div class="confirm-all">
           <span class="label">🛣 墨已把任务放进你的动线</span>
           <button class="btn" data-action="task:accept-all">一键全确认</button>
         </div>` : ''}
-
-      ${backlogHint}
 
       <div class="timeline">
         ${groups.map(g => `
@@ -523,20 +447,19 @@ function renderToday() {
 
       ${fragCard}
 
-      ${goalsCompact}
-
       ${doneSection}
+
+      <button class="end-day-ghost" data-action="day:end">🌙 今天做完了？结束今天</button>
 
       <div class="today-bottom">
         <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
           📋 待办 <span class="n">${store.backlog.length}</span> 件
         </button>
-        <button class="end-day-btn" data-action="day:end">🌙 结束今天</button>
-        <button class="quick-ic" data-action="camera:open" title="拍照识别" aria-label="拍照识别">
-          <span class="qi-ic">📷</span><span class="qi-lb">拍照</span>
-        </button>
         <button class="quick-ic" data-action="history:open" title="历史消息" aria-label="历史消息">
           <span class="qi-ic">💬</span><span class="qi-lb">消息</span>
+        </button>
+        <button class="quick-ic" data-action="camera:open" title="拍照识别" aria-label="拍照识别">
+          <span class="qi-ic">📷</span><span class="qi-lb">拍照</span>
         </button>
       </div>
 
@@ -692,16 +615,28 @@ function renderBacklog() {
       <div class="inbox-list">${inboxHtml}</div>
     </section>`;
 
-  // 7天提醒
-  const stale7 = store.backlog.filter(b => (new Date(Store.todayStr()) - new Date(b.originalDate + 'T00:00:00')) / 864e5 >= 7);
-  const remind = stale7.length ? stale7.map(b => `
+  // 待办存放提醒：3天未排 / 7天未动（从今日页移来，避免在今日页干扰执行）
+  const ageOf = b => (new Date(Store.todayStr()) - new Date(b.originalDate + 'T00:00:00')) / 864e5;
+  const stale7 = store.backlog.filter(b => ageOf(b) >= 7);
+  const stale3 = store.backlog.filter(b => ageOf(b) >= 3 && ageOf(b) < 7);
+  const remind = [
+    ...stale7.map(b => `
     <div class="remind-card">
       <span>${AI.copy('backlog_7d', { task: b.text })}</span>
       <div class="acts">
         <button data-action="backlog:restore" data-id="${b.id}">重新安排</button>
         <button class="ghost" data-action="backlog:delete" data-id="${b.id}">删除</button>
       </div>
-    </div>`).join('') : '';
+    </div>`),
+    ...stale3.map(b => `
+    <div class="remind-card" style="background:rgba(212,184,217,.08)">
+      <span>${AI.copy('backlog_3d', { task: b.text })}</span>
+      <div class="acts">
+        <button data-action="backlog:restore" data-id="${b.id}">排进今日</button>
+        <button class="ghost" data-action="backlog:delete" data-id="${b.id}">放下</button>
+      </div>
+    </div>`)
+  ].join('');
 
   // 按日期分组
   const groups = {};
@@ -946,13 +881,13 @@ function renderGoals() {
 
 /* ================= 复盘页 ================= */
 function reviewOpener(r) {
-  if (r.fullAttendance) return '这周你一天都没落下，节奏是稳稳的。';
-  if (r.total === 0) return '这一周你走得很轻，没关系，存在本身就有意义。';
-  return '这周你有快有慢，但一直没停下来。';
+  if (r.fullAttendance) return AI.copy('streak3');
+  if (r.total === 0) return AI.copy('weekly_opener') + ' 这一周你走得很轻，没关系，存在本身就有意义。';
+  return AI.copy('weekly_opener');
 }
 function monthOpener(m) {
-  if (m.total === 0) return '这个月你走得很轻，没关系，休养也是进度。';
-  return '这一个月，你按自己的节奏，把一件件小事安放好了。';
+  if (m.total === 0) return AI.copy('monthly_opener') + ' 这个月你走得很轻，没关系，休养也是进度。';
+  return AI.copy('monthly_opener');
 }
 function renderReview() {
   const seg = `
@@ -1089,7 +1024,6 @@ function bubble(text, align = 'left', id = '') {
       ${align === 'left' ? `<div class="ai-avatar" aria-label="墨"></div>` : ''}
       <div class="ai-bubble" ${id ? `id="${id}"` : ''}>
         <div class="text">${hlText(text)}</div>
-        <div class="who"><span class="dot" aria-hidden="true"></span>我</div>
       </div>
     </div>`;
 }
@@ -1106,7 +1040,6 @@ function toast(text, opts = {}) {
       <div class="ai-bubble" style="max-width:${opts.wide ? '340px' : '300px'};background:${opts.ai ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.7)'};backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
         <div class="toast-text">${hlText(text)}</div>
         ${buttons}
-        <div class="who"><span class="dot" aria-hidden="true"></span>我</div>
       </div>
     </div>`);
   root.appendChild(t);
@@ -1918,9 +1851,13 @@ function setMood(m) {
   if (m === '😊') {
     store.flags.tomorrowBoost = Store.shiftDate(Store.todayStr(), 1);
     Store.save();
+    aiToast('mood_happy');
+  }
+  if (m === '😐') {
+    aiToast('mood_neutral');
   }
   if (m === '😔' && prev !== '😔') {
-    // 移1件到待办
+    // 只留 1 件最重要、其余顺延到待办
     const undone = store.today.tasks.filter(t => !t.done);
     if (undone.length > 1) {
       const kept = undone.find(t => t.priority) || undone[0];

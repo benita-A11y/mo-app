@@ -158,8 +158,10 @@ const Store = (() => {
       },
       tags: { prefs: {}, history: [], corrections: {} },
       dayTasks: {},
-      weekNotes: {},   // { '周一日期': { focus:'', summary:'' } }
-      monthNotes: {}   // { '2026-08': { focus:'', summary:'' } }
+      dayHighlights: {},   // { '2026-08-23': [{id, text, from}] } 今日重点（拖拽设入的核心目标）
+      weekNotes: {},   // { '周一日期': { focus:'', summary:'', items:[] } } 本周重点项
+      monthNotes: {},  // { '2026-08': { focus:'', summary:'', items:[] } } 本月重点项
+      timelineView: 'week' // 时间轴默认视图：today / week / month
     };
     // 给种子数据自动打标签
     result.today.tasks.forEach(t => { t.tag = seedTag(t.text); });
@@ -224,8 +226,12 @@ const Store = (() => {
       data.version = 6;
       data.tags = data.tags || { prefs: {}, history: [], corrections: {} };
       data.dayTasks = data.dayTasks || {};
+      data.dayHighlights = data.dayHighlights || {};
       data.weekNotes = data.weekNotes || {};
       data.monthNotes = data.monthNotes || {};
+      // 旧版 weekNotes/monthNotes 可能没有 items 字段，补齐
+      Object.values(data.weekNotes).forEach(n => { if (n && !n.items) n.items = []; });
+      Object.values(data.monthNotes).forEach(n => { if (n && !n.items) n.items = []; });
       if (data.today && Array.isArray(data.today.tasks)) {
         data.today.tasks.forEach(t => { if (t.tag === undefined) t.tag = ''; });
       }

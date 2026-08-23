@@ -77,7 +77,7 @@ const Store = (() => {
     completedLog.push({ id: uid(), text: '读《认知觉醒》第3章', date: d12, doneAt: '', estMin: 30, actualMin: 30, mood: '😐', note: '' });
 
     const result = {
-      version: 5,
+      version: 6,
       settings: {
         palette: 'lavender', theme: 'system',
         ai: { enabled: false, provider: 'deepseek', apiKey: '', baseUrl: '', model: '' },
@@ -157,7 +157,8 @@ const Store = (() => {
         fragBubbleShownDate: null // 右下角「碎片时间气泡」每日只提示一次
       },
       tags: { prefs: {}, history: [], corrections: {} },
-      dayTasks: {}
+      dayTasks: {},
+      weekNotes: {}   // { '周一日期': { focus:'', summary:'' } }
     };
     // 给种子数据自动打标签
     result.today.tasks.forEach(t => { t.tag = seedTag(t.text); });
@@ -217,11 +218,12 @@ const Store = (() => {
         if (t.routeNote === undefined) t.routeNote = '';
       });
     }
-    // v5: 标签系统 + 按日任务池
-    if ((data.version || 0) < 5) {
-      data.version = 5;
+    // v5/v6: 标签系统 + 按日任务池 + 周重点
+    if ((data.version || 0) < 6) {
+      data.version = 6;
       data.tags = data.tags || { prefs: {}, history: [], corrections: {} };
       data.dayTasks = data.dayTasks || {};
+      data.weekNotes = data.weekNotes || {};
       if (data.today && Array.isArray(data.today.tasks)) {
         data.today.tasks.forEach(t => { if (t.tag === undefined) t.tag = ''; });
       }
@@ -260,6 +262,7 @@ const Store = (() => {
     const [y, m, d] = ymd.split('-').map(Number);
     return { y, m, d };
   }
+  function weekKey(ymd) { return startOfWeek(ymd); }
 
-  return { load, save, reset, seed, uid, todayStr, toYMD, shiftDate, fmtMD, fmtDOW, weekdaysBetween, listWeekdays, startOfWeek, weekDates, monthDays, parseYMD };
+  return { load, save, reset, seed, uid, todayStr, toYMD, shiftDate, fmtMD, fmtDOW, weekdaysBetween, listWeekdays, startOfWeek, weekDates, monthDays, parseYMD, weekKey };
 })();

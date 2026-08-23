@@ -16,7 +16,7 @@ const settingsIcon = () => '<svg viewBox="0 0 24 24" fill="none" stroke="current
 const App = {
   tab: 'today',
   reviewTab: 'weekly',
-  timelineView: 'week',       // 时间轴：week / month
+  timelineView: 'week',       // 时间轴：today / week / month
   timelineDate: Store ? Store.todayStr() : '',
   todayViewDate: Store ? Store.todayStr() : '', // 今日页当前查看日期
   timelineSelectedDate: '',   // 时间轴中选中的日期（展开任务列表）
@@ -281,6 +281,9 @@ function adjustSlot(id) {
 let _dragId = null;
 let _dragPoolId = null;     // 待办池拖拽中的任务 id
 let _dragPoolFrom = '';     // 来源：backlog / today / day
+let _dragTlId = null;       // 时间轴任务卡片拖拽中的 id
+let _dragTlDate = '';       // 时间轴任务卡片所在日期
+let _dragTlFrom = '';       // 来源：day
 function moveTask(fromId, toId) {
   const store = Store.load();
   const arr = store.today.tasks;
@@ -729,69 +732,124 @@ function dowColor(date) {
   return map[DOW_COLORS[(new Date(date + 'T00:00:00').getDay() + 6) % 7]] || map.default;
 }
 
-/* 渲染时间轴页面（严格按参考截图） */
+/* 渲染时间轴页面（今天 / 本周 / 本月 三视图） */
 function renderTimeline() {
   const store = Store.load();
   const view = App.timelineView || 'week';
   const base = App.timelineDate || Store.todayStr();
 
-  const title = view === 'week'
-    ? `W${Store.weekNumber(base)}, 本周`
-    : `${Store.parseYMD(base).y}/${Store.parseYMD(base).m}`;
+  let title = '时间轴';
+  if (view === 'today') {
+    const d = base;
+    title = `今天 · ${Store.fmtMD(d)} ${Store.fmtDOW(d)}`;
+  } else if (view === 'week') {
+    const days = Store.weekDates(base);
+    title = `本周 · ${Store.fmtMD(days[0])} - ${Store.fmtMD(days[6])} 第${Store.weekNumber(base)}周`;
+  } else {
+    const pm = Store.parseYMD(base);
+    title = `${pm.y}年${pm.m}月`;
+  }
 
   const header = `
     <div class="timeline-toolbar">
-      <button class="tl-tool tl-menu" data-action="timeline:menu">☰</button>
-      <div class="tl-title">
-        <span>${title}</span>
-        <button class="tl-chev" data-action="timeline:pick">›</button>
+      <div class="tl-views">
+        <button class="tl-view ${view === 'today' ? 'on' : ''}" data-action="timeline:view" data-view="today">📅 今天</button>
+        <button class="tl-view ${view === 'week' ? 'on' : ''}" data-action="timeline:view" data-view="week">📆 本周</button>
+        <button class="tl-view ${view === 'month' ? 'on' : ''}" data-action="timeline:view" data-view="month">🗓️ 本月</button>
       </div>
-      <div class="tl-tools">
-        <button class="tl-tool" data-action="timeline:gift" title="礼物">🎁</button>
-        <button class="tl-tool" data-action="timeline:search" title="搜索">🔍</button>
-        <div class="tl-seg">
-          <button class="${view === 'week' ? 'on' : ''}" data-action="timeline:view" data-view="week">周</button>
-          <button class="${view === 'month' ? 'on' : ''}" data-action="timeline:view" data-view="month">月</button>
-        </div>
-        <button class="tl-tool" data-action="timeline:more" title="更多">⋯</button>
-      </div>
+      ${view === 'week' || view === 'month'
+        ? `<div class="tl-nav">
+             <button class="tl-tool" data-action="timeline:page" data-dir="-1">‹</button>
+             <button class="tl-tool" data-action="timeline:page" data-dir="1">›</button>
+           </div>`
+        : ''}
     </div>`;
 
   let body = '';
-  if (view === 'week') body = renderWeekBody(store, base);
+  if (view === 'today') body = renderTodayBody(store, base);
+  else if (view === 'week') body = renderWeekBody(store, base);
   else body = renderMonthBody(store, base);
 
   return `<div class="timeline-page" data-view="${view}">${header}${body}</div>`;
+}
+
+/* 今天视图主体：时段分组时间线 + 今日重点 + 今日总结 */
+function renderTodayBody(store, base) {
+  const d = base;
+  const isT = d === Store.todayStr();
+  const list = dayTaskList(d);
+  const SLOTS = [
+    { key: 'am', label: '上午', time: '00:00-12:00' },
+    { key: 'noon', label: '中午', time: '12:00-14:00' },
+    { key: 'pm', label: '下午', time: '14:00-18:00' },
+    { key: 'night', label: '晚上', time: '18:00-24:00' }
+  ];
+  const slotOf = t => {
+    if (t.slot === 'am' || t.slot === 'early') return 'am';
+    if (t.slot === 'noon') return 'noon';
+    if (t.slot === 'pm' || t.slot === 'after') return 'pm';
+    if (t.slot === 'night' || t.slot === 'evening' || t.slot === 'sleep' || t.slot === 'late') return 'night';
+    // 没有 slot 时按时间估算
+    const m = (t.timeStart || '').slice(0, 2) | 0;
+    if (m >= 12 && m < 14) return 'noon';
+    if (m >= 14 && m < 18) return 'pm';
+    if (m >= 18) return 'night';
+    return 'am';
+  };
+
+  const timelineHtml = SLOTS.map(s => {
+    const items = list.filter(t => slotOf(t) === s.key);
+    const body = items.length
+      ? items.map(t => timelineTaskItem(t, d)).join('')
+      : `<div class="slot-empty">（空闲）</div>`;
+    return `
+      <div class="tl-slot">
+        <div class="slot-head">${s.label}</div>
+        <div class="slot-list">${body}</div>
+      </div>`;
+  }).join('');
+
+  // 今日重点：拖拽任务到此设为核心目标
+  const hi = (store.dayHighlights && store.dayHighlights[d]) || [];
+  const focusHtml = `
+    <div class="focus-card">
+      <div class="fc-title">📌 今日重点</div>
+      <div class="hl-dropzone ${hi.length ? 'has' : ''}" data-action="today:highlight" data-date="${d}">
+        ${hi.length
+          ? hi.map(h => `<div class="hl-chip" data-action="today:unhighlight" data-date="${d}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
+          : '<span class="hl-tip">可拖拽任务到此设为重点</span>'}
+      </div>
+      <textarea class="fc-input" id="today-summary-input" placeholder="今天过得怎么样？写一句话吧…" data-action="today:summary" data-date="${d}">${esc((store.todaySummary && store.todaySummary[d]) || '')}</textarea>
+    </div>`;
+
+  return `
+    <div class="today-mode">
+      <div class="tl-timeline">${timelineHtml}</div>
+      ${focusHtml}
+    </div>`;
 }
 
 /* 周视图主体 */
 function renderWeekBody(store, base) {
   const days = Store.weekDates(base);
   const wk = Store.weekKey(base);
-  const wn = store.weekNotes[wk] || { focus: '', summary: '' };
-  const tab = App.timelineFocusTab || 'focus';
+  const wn = store.weekNotes[wk] || { focus: '', summary: '', items: [] };
+  if (!wn.items) wn.items = [];
 
-  // 默认选中今天（若在当前周）否则选中 base
-  if (!App.timelineSelectedDate || !days.includes(App.timelineSelectedDate)) {
-    App.timelineSelectedDate = days.includes(Store.todayStr()) ? Store.todayStr() : base;
-  }
-  const selDate = App.timelineSelectedDate;
-
+  // 本周重点：独立顶部区域，可拖拽任务设为本周重点
   const focusCard = `
-    <div class="focus-card">
-      <div class="fc-tabs">
-        <span class="fc-tab ${tab === 'focus' ? 'on' : ''}" data-action="focus:tab" data-tab="focus">本周重点</span>
-        <span class="fc-tab ${tab === 'summary' ? 'on' : ''}" data-action="focus:tab" data-tab="summary">本周总结</span>
+    <div class="focus-card week-focus">
+      <div class="fc-title">📌 本周重点</div>
+      <div class="hl-dropzone ${wn.items.length ? 'has' : ''}" data-action="week:highlight" data-week="${wk}">
+        ${wn.items.length
+          ? wn.items.map(h => `<div class="hl-chip" data-action="week:unhighlight" data-week="${wk}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
+          : '<span class="hl-tip">可拖拽任务到此设为本周重点</span>'}
       </div>
-      ${tab === 'focus'
-        ? `<textarea class="fc-input" id="week-focus-input" placeholder="本周最想完成什么？" data-action="week:focus" data-week="${wk}">${esc(wn.focus)}</textarea>`
-        : `<textarea class="fc-input" id="week-summary-input" placeholder="这周实际完成了什么？" data-action="week:summary" data-week="${wk}">${esc(wn.summary)}</textarea>`}
     </div>`;
 
   const cards = days.map(d => {
     const list = dayTaskList(d);
     const isT = d === Store.todayStr();
-    const isSel = d === selDate;
     const done = list.filter(t => t.done).length;
     const color = dowColorClass(d);
     const count = list.length ? `${done}/${list.length}` : '0';
@@ -800,32 +858,37 @@ function renderWeekBody(store, base) {
       <div class="dc-head ${color}">
         <span class="dc-dow">${Store.fmtDOW(d)}</span>
         <span class="dc-date">${Store.fmtMD(d)}</span>
-        <span class="dc-count">${count}</span>
         <button class="dc-add" data-action="day:add" data-date="${d}">+</button>
       </div>`;
 
-    // 只有选中的卡片才展开显示任务列表；未选中只显示头部
-    const content = isSel ? `
-      <div class="dc-body ${isT ? 'today' : ''}" data-date="${d}">
-        ${list.length ? list.map(t => timelineTaskItem(t, d)).join('') : `<div class="dc-empty" data-action="day:add" data-date="${d}">点击 + 添加任务</div>`}
-        <button class="dc-goto" data-action="today:date" data-date="${d}">${isT ? '进入今天' : '在今日页查看'}</button>
-      </div>` : '';
+    const body = `
+      <div class="dc-body${isT ? ' today' : ''}" data-date="${d}">
+        ${list.length ? list.map(t => timelineTaskItem(t, d)).join('') : `<div class="dc-empty" data-action="day:add" data-date="${d}">点击 + 添加</div>`}
+        <button class="dc-goto" data-action="today:date" data-date="${d}">${isT ? '进入今天' : '查看'}</button>
+      </div>`;
 
     const conflict = AI.dragConflict(d, 0);
     const dropState = conflict && conflict.level === 'block' ? ' block' : (conflict && conflict.level === 'warn' ? ' warn' : '');
 
-    return `<div class="day-card ${color}${isSel ? ' selected' : ''}${isT ? ' today' : ''}${dropState}" data-date="${d}" data-action="timeline:day" data-date="${d}">
-      ${head}${content}
+    return `<div class="day-col ${color}${isT ? ' today' : ''}${dropState}" data-date="${d}" data-action="today:date" data-date="${d}">
+      ${head}${body}
     </div>`;
   }).join('');
 
   const pool = renderPool(store);
 
+  const summary = `
+    <div class="focus-card week-summary">
+      <div class="fc-title">✏️ 本周总结</div>
+      <textarea class="fc-input" id="week-summary-input" placeholder="这周过得怎么样？写几句话吧…" data-action="week:summary" data-week="${wk}">${esc(wn.summary)}</textarea>
+    </div>`;
+
   return `
     <div class="week-mode">
       ${focusCard}
-      <div class="week-grid">${cards}</div>
+      <div class="week-grid week-cols">${cards}</div>
       ${pool}
+      ${summary}
     </div>`;
 }
 
@@ -834,8 +897,8 @@ function renderMonthBody(store, base) {
   const d0 = new Date(base + 'T00:00:00');
   const yr = d0.getFullYear(), mo = d0.getMonth();
   const mk = `${yr}-${String(mo + 1).padStart(2, '0')}`;
-  const mn = store.monthNotes[mk] || { focus: '', summary: '' };
-  const tab = App.timelineFocusTab || 'focus';
+  const mn = store.monthNotes[mk] || { focus: '', summary: '', items: [] };
+  if (!mn.items) mn.items = [];
 
   const firstDow = (new Date(yr, mo, 1).getDay() + 6) % 7;
   const daysInMonth = Store.monthDays(yr, mo + 1);
@@ -849,18 +912,18 @@ function renderMonthBody(store, base) {
     rows.push(cells.slice(r * 7, r * 7 + 7));
   }
 
+  // 本月重点：拖拽目标到此设为本月核心目标
   const focusCard = `
     <div class="focus-card month-focus">
-      <div class="fc-tabs">
-        <span class="fc-tab ${tab === 'focus' ? 'on' : ''}" data-action="focus:tab" data-tab="focus">本月重点</span>
-        <span class="fc-tab ${tab === 'summary' ? 'on' : ''}" data-action="focus:tab" data-tab="summary">本月总结</span>
+      <div class="fc-title">📌 本月重点</div>
+      <div class="hl-dropzone ${mn.items.length ? 'has' : ''}" data-action="month:highlight" data-month="${mk}">
+        ${mn.items.length
+          ? mn.items.map(h => `<div class="hl-chip" data-action="month:unhighlight" data-month="${mk}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
+          : '<span class="hl-tip">可拖拽目标至此设为当月核心</span>'}
       </div>
-      ${tab === 'focus'
-        ? `<div class="fc-dropzone" data-date="${base}">将任务拖到这里即可关联。</div>`
-        : `<textarea class="fc-input" id="month-summary-input" placeholder="这个月最大的收获是？" data-action="month:summary" data-month="${mk}">${esc(mn.summary)}</textarea>`}
     </div>`;
 
-  const gridRows = rows.map((row, ri) => {
+  const gridRows = rows.map(row => {
     const hasSel = row.some(d => d === App.timelineSelectedDate);
     const cellsHtml = row.map(d => {
       if (!d) return `<div class="month-cell empty"></div>`;
@@ -870,9 +933,14 @@ function renderMonthBody(store, base) {
       const isT = d === Store.todayStr();
       const isSel = d === App.timelineSelectedDate;
       const color = dowColorClass(d);
-      return `<div class="month-cell ${color}${isT ? ' today' : ''}${isSel ? ' selected' : ''}${n ? ' has-task' : ''}" data-date="${d}" data-action="timeline:day" data-date="${d}">
+      const dens = AI.monthDensity(n);
+      const dot = n && dens.size
+        ? `<span class="mc-dot" style="width:${dens.size}px;height:${dens.size}px;background:${dens.color}"></span>`
+        : '';
+      return `<div class="month-cell ${color}${isT ? ' today' : ''}${isSel ? ' selected' : ''}${n ? ' has-task' : ''}" data-date="${d}" data-action="today:date" data-date="${d}">
         <span class="mc-date">${Number(d.split('-')[2])}</span>
-        <span class="mc-count">${n ? done + '/' + n : '0'}</span>
+        <span class="mc-count">${n ? done + '/' + n : ''}</span>
+        ${dot}
       </div>`;
     }).join('');
 
@@ -898,9 +966,23 @@ function renderMonthBody(store, base) {
   const freeDays = cells.filter(Boolean).filter(d => scheduledCount(d) === 0).length;
   const busyDay = cells.filter(Boolean).reduce((best, d) => { const n = scheduledCount(d); return n > best.n ? { d, n } : best; }, { d: '', n: 0 });
 
-  let advise = AI.copy(monthTotal === 0 ? 'month_summary_light' : monthTotal < 50 ? 'month_summary_light' : monthTotal < 100 ? 'month_summary_medium' : 'month_summary_heavy');
-  if (busyDay.n >= 8) advise += ' ' + AI.copy('month_busy_day', { day: busyDay.d ? Store.fmtMD(busyDay.d) : '', n: busyDay.n });
-  if (freeDays >= 7) advise += ' ' + AI.copy('month_free_days', { n: freeDays });
+  let advise = AI.copy('month_summary_light');
+  if (monthTotal >= 26) advise = AI.copy('month_summary_heavy');
+  else if (monthTotal >= 11) advise = AI.copy('month_summary_medium');
+  if (busyDay.n >= 5) advise += ' ' + AI.copy('month_busy_day', { date: busyDay.d ? Store.fmtMD(busyDay.d) : '', n: busyDay.n });
+  else if (busyDay.n === 0 && freeDays > 0) { /* 无最忙日 */ }
+  if (freeDays >= 3) {
+    const rel = cells.filter(Boolean).reduce((best, d) => {
+      const n = scheduledCount(d); return n < best.n ? { d, n } : best;
+    }, { d: busyDay.d, n: 99 });
+    if (rel.n <= 1 && rel.d) advise += ` ${Store.fmtMD(rel.d)}相对空闲，可以安排一些碎片任务。`;
+  }
+
+  const summary = `
+    <div class="focus-card month-summary-card">
+      <div class="fc-title">✏️ 本月总结</div>
+      <textarea class="fc-input" id="month-summary-input" placeholder="这个月过得怎么样？写几句话吧…" data-action="month:summary" data-month="${mk}">${esc(mn.summary)}</textarea>
+    </div>`;
 
   return `
     <div class="month-mode">
@@ -908,9 +990,10 @@ function renderMonthBody(store, base) {
       ${focusCard}
       <div class="month-grid">${gridRows}</div>
       <div class="month-summary">
-        <div class="ms-total">本月共安排 <strong>${monthTotal}</strong> 件任务</div>
+        <div class="ms-total">本月总任务：<strong>${monthTotal}</strong> 件 · 最忙的一天：<strong>${busyDay.d ? Store.fmtMD(busyDay.d).replace('月','日') + '（' + busyDay.n + '件）' : '无'}</strong></div>
         <div class="ms-advise">${advise || '节奏刚刚好，记得给自己留点空白。'}</div>
       </div>
+      ${summary}
     </div>`;
 }
 
@@ -938,7 +1021,7 @@ function timelineTaskItem(t, date) {
   const tag = t.tag || '';
   const tagDot = tag && AI.TAGS[tag] ? `<span class="tag-dot ${tag}" title="${AI.TAGS[tag].name}"></span>` : '';
   const color = dowColorClass(date);
-  return `<div class="tl-task${t.done ? ' done' : ''}" data-action="timeline:task" data-id="${t.id}" data-date="${date}">
+  return `<div class="tl-task${t.done ? ' done' : ''}"${t.done ? '' : ' draggable="true"'} data-action="timeline:task" data-id="${t.id}" data-date="${date}">
     <span class="tl-check ${color}" data-action="day:check" data-id="${t.id}" data-date="${date}">${t.done ? '✓' : ''}</span>
     ${tagDot}<span class="tl-text">${esc(t.text)}</span>
     <button class="tl-more" data-action="day:more" data-id="${t.id}" data-date="${date}">⋮</button>
@@ -1068,6 +1151,99 @@ function saveWeekSummary(wk) {
   store.weekNotes[wk] = store.weekNotes[wk] || {};
   store.weekNotes[wk].summary = ($('#week-summary-input') || {}).value || '';
   Store.save();
+}
+
+/* 今日重点 / 总结 存储 */
+function saveTodaySummary(d) {
+  const store = Store.load();
+  store.todaySummary = store.todaySummary || {};
+  store.todaySummary[d] = ($('#today-summary-input') || {}).value || '';
+  Store.save();
+}
+
+/** 把任务设为某日「今日重点」（拖拽入 dropzone） */
+function addDayHighlight(d, taskObj) {
+  if (!taskObj) return;
+  const store = Store.load();
+  store.dayHighlights = store.dayHighlights || {};
+  store.dayHighlights[d] = store.dayHighlights[d] || [];
+  if (store.dayHighlights[d].some(h => h.id === taskObj.id)) return;
+  store.dayHighlights[d].push({ id: taskObj.id, text: taskObj.text, from: taskObj.from || 'task' });
+  Store.save();
+  render();
+}
+
+function removeDayHighlight(d, hid) {
+  const store = Store.load();
+  store.dayHighlights = store.dayHighlights || {};
+  if (store.dayHighlights[d]) store.dayHighlights[d] = store.dayHighlights[d].filter(h => h.id !== hid);
+  Store.save();
+  render();
+}
+
+/** 把任务设为本周重点项 */
+function addWeekHighlight(wk, taskObj) {
+  if (!taskObj) return;
+  const store = Store.load();
+  store.weekNotes = store.weekNotes || {};
+  store.weekNotes[wk] = store.weekNotes[wk] || { focus: '', summary: '', items: [] };
+  if (!store.weekNotes[wk].items) store.weekNotes[wk].items = [];
+  if (store.weekNotes[wk].items.some(h => h.id === taskObj.id)) return;
+  store.weekNotes[wk].items.push({ id: taskObj.id, text: taskObj.text, from: taskObj.from || 'task' });
+  Store.save();
+  render();
+}
+
+function removeWeekHighlight(wk, hid) {
+  const store = Store.load();
+  store.weekNotes = store.weekNotes || {};
+  if (store.weekNotes[wk] && store.weekNotes[wk].items) {
+    store.weekNotes[wk].items = store.weekNotes[wk].items.filter(h => h.id !== hid);
+  }
+  Store.save();
+  render();
+}
+
+/** 把目标/任务设为当月重点项 */
+function addMonthHighlight(mk, taskObj) {
+  if (!taskObj) return;
+  const store = Store.load();
+  store.monthNotes = store.monthNotes || {};
+  store.monthNotes[mk] = store.monthNotes[mk] || { focus: '', summary: '', items: [] };
+  if (!store.monthNotes[mk].items) store.monthNotes[mk].items = [];
+  if (store.monthNotes[mk].items.some(h => h.id === taskObj.id)) return;
+  store.monthNotes[mk].items.push({ id: taskObj.id, text: taskObj.text, from: taskObj.from || 'task' });
+  Store.save();
+  render();
+}
+
+function removeMonthHighlight(mk, hid) {
+  const store = Store.load();
+  store.monthNotes = store.monthNotes || {};
+  if (store.monthNotes[mk] && store.monthNotes[mk].items) {
+    store.monthNotes[mk].items = store.monthNotes[mk].items.filter(h => h.id !== hid);
+  }
+  Store.save();
+  render();
+}
+
+/** 从任意来源（待办池/任务卡片）取出任务对象，供拖拽设重点 */
+function pickTaskObject(id, from, date) {
+  const store = Store.load();
+  if (from === 'backlog') return store.backlog.find(t => t.id === id) ? { id, text: store.backlog.find(t => t.id === id).text, from: 'backlog' } : null;
+  if (from === 'today' || (from === 'day' && date === Store.todayStr())) {
+    const t = store.today.tasks.find(x => x.id === id); return t ? { id, text: t.text, from: 'today' } : null;
+  }
+  if (from === 'day') {
+    const arr = (store.dayTasks && store.dayTasks[date]) || [];
+    const t = arr.find(x => x.id === id); return t ? { id, text: t.text, from: 'day' } : null;
+  }
+  // 目标任务
+  for (const g of store.goals) {
+    const t = g.tasks.find(x => x.id === id);
+    if (t) return { id, text: t.text, from: 'goal' };
+  }
+  return null;
 }
 
 function openDayTaskMenu(date, id) {
@@ -2203,9 +2379,12 @@ function bindEvents() {
     if (e.target && e.target.id === 'month-summary-input') {
       saveMonthNote(e.target.dataset.month);
     }
+    if (e.target && e.target.id === 'today-summary-input') {
+      saveTodaySummary(e.target.dataset.date);
+    }
   });
 
-  // 时间线拖拽排序（桌面端；手机端用"安排"按钮）
+  // 时间线拖拽：任务卡片/待办池 → 日期安排 / 重点区设重点
   document.addEventListener('dragstart', e => {
     const li = e.target.closest('.task');
     if (li && li.dataset.action === 'task:detail' && !li.classList.contains('done')) {
@@ -2214,7 +2393,17 @@ function bindEvents() {
       if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
       return;
     }
-    // 待办池任务拖到周视图的日期卡片或月视图的日期格
+    // 时间轴任务卡片：可拖到日期或重点区
+    const tl = e.target.closest('.tl-task');
+    if (tl && !tl.classList.contains('done')) {
+      _dragTlId = tl.dataset.id;
+      _dragTlDate = tl.dataset.date || '';
+      _dragTlFrom = 'day';
+      tl.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', tl.dataset.id); }
+      return;
+    }
+    // 待办池任务拖到周视图的日期卡片或月视图的日期格 / 重点区
     const pool = e.target.closest('.pool-item');
     if (pool) {
       _dragPoolId = pool.dataset.id;
@@ -2226,10 +2415,15 @@ function bindEvents() {
   document.addEventListener('dragover', e => {
     const li = e.target.closest('.task');
     if (li && _dragId && li.dataset.id !== _dragId) { e.preventDefault(); return; }
-    const target = e.target.closest('.day-card') || e.target.closest('.month-cell');
-    if (target && _dragPoolId && target.dataset.date) {
+    const dt = e.target.closest('.day-col') || e.target.closest('.month-cell');
+    if (dt && (_dragPoolId || _dragTlId) && dt.dataset.date) {
       e.preventDefault();
-      target.classList.add('drop-hot');
+      dt.classList.add('drop-hot');
+    }
+    const dz = e.target.closest('.hl-dropzone');
+    if (dz && (_dragPoolId || _dragTlId)) {
+      e.preventDefault();
+      dz.classList.add('drop-hot');
     }
   });
   document.addEventListener('drop', e => {
@@ -2241,19 +2435,36 @@ function bindEvents() {
       render();
       return;
     }
-    const target = e.target.closest('.day-card') || e.target.closest('.month-cell');
-    if (target && _dragPoolId && target.dataset.date) {
+    // 重点区：设为今日/本周/本月重点
+    const dz = e.target.closest('.hl-dropzone');
+    if (dz && (_dragPoolId || _dragTlId)) {
+      e.preventDefault();
+      const id = _dragTlId || _dragPoolId;
+      const from = _dragTlId ? _dragTlFrom : _dragPoolFrom;
+      const date = _dragTlId ? _dragTlDate : '';
+      const obj = pickTaskObject(id, from, date);
+      dz.classList.remove('drop-hot');
+      if (dz.dataset.action === 'today:highlight') addDayHighlight(dz.dataset.date, obj);
+      else if (dz.dataset.action === 'week:highlight') addWeekHighlight(dz.dataset.week, obj);
+      else if (dz.dataset.action === 'month:highlight') addMonthHighlight(dz.dataset.month, obj);
+      _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = '';
+      return;
+    }
+    // 日期安排
+    const target = e.target.closest('.day-col') || e.target.closest('.month-cell');
+    if (target && (_dragPoolId || _dragTlId) && target.dataset.date) {
       e.preventDefault();
       const date = target.dataset.date;
-      const id = _dragPoolId, from = _dragPoolFrom;
-      document.querySelectorAll('.day-card.drop-hot, .month-cell.drop-hot').forEach(c => c.classList.remove('drop-hot'));
+      const id = _dragTlId || _dragPoolId;
+      const from = _dragTlId ? _dragTlFrom : _dragPoolFrom;
+      document.querySelectorAll('.day-col.drop-hot, .month-cell.drop-hot').forEach(c => c.classList.remove('drop-hot'));
       const c = AI.dragConflict(date, 1);
-      if (c && c.level === 'block') { toast('这天已经排满了，换一天吧。', { ai: true }); _dragPoolId = null; _dragPoolFrom = ''; return; }
+      if (c && c.level === 'block') { toast('这天已经排满了，换一天吧。', { ai: true }); _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = ''; return; }
       App.timelineSelectedDate = date;
       moveTaskToDate(id, date, from);
       if (c && c.level === 'warn') toast('这天任务有点多，记得留点空隙。', { ai: true });
       else aiToast('task_moved_to_date', { task: '', date: Store.fmtMD(date) });
-      _dragPoolId = null; _dragPoolFrom = '';
+      _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = '';
     }
   });
   document.addEventListener('dragend', e => {
@@ -2261,8 +2472,10 @@ function bindEvents() {
     if (li) li.classList.remove('dragging');
     const pool = e.target.closest('.pool-item');
     if (pool) pool.classList.remove('dragging');
-    document.querySelectorAll('.day-card.drop-hot, .month-cell.drop-hot').forEach(c => c.classList.remove('drop-hot'));
-    _dragId = null; _dragPoolId = null; _dragPoolFrom = '';
+    const tl = e.target.closest('.tl-task');
+    if (tl) tl.classList.remove('dragging');
+    document.querySelectorAll('.day-col.drop-hot, .month-cell.drop-hot, .hl-dropzone.drop-hot').forEach(c => c.classList.remove('drop-hot'));
+    _dragId = null; _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = '';
   });
 
   // 深色模式跟随系统
@@ -2457,7 +2670,7 @@ function onClick(e) {
       break;
     }
     case 'day:end': endToday(); break;
-    case 'today:date': App.todayViewDate = btn.dataset.date || Store.todayStr(); render(); break;
+    case 'today:date': App.todayViewDate = btn.dataset.date || Store.todayStr(); App.tab = 'today'; render(); break;
     case 'today:week': {
       const dir = Number(btn.dataset.dir) || 0;
       const base = App.todayViewDate || Store.todayStr();
@@ -2485,7 +2698,8 @@ function onClick(e) {
     }
     case 'timeline:day': {
       const d = btn.dataset.date;
-      App.timelineSelectedDate = d;
+      App.todayViewDate = d;
+      App.tab = 'today';
       render();
       break;
     }
@@ -2494,9 +2708,13 @@ function onClick(e) {
       render();
       break;
     }
+    case 'today:summary': saveTodaySummary(btn.dataset.date); break;
+    case 'today:unhighlight': removeDayHighlight(btn.dataset.date, btn.dataset.hid); break;
     case 'week:focus': saveWeekFocus(btn.dataset.week); break;
     case 'week:summary': saveWeekSummary(btn.dataset.week); break;
+    case 'week:unhighlight': removeWeekHighlight(btn.dataset.week, btn.dataset.hid); break;
     case 'month:summary': saveMonthNote(btn.dataset.month); break;
+    case 'month:unhighlight': removeMonthHighlight(btn.dataset.month, btn.dataset.hid); break;
     case 'timeline:task': {
       const d = btn.dataset.date, id = btn.dataset.id;
       openTaskDetail(id, d === Store.todayStr() ? 'today' : 'day:' + d);

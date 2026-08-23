@@ -16,13 +16,19 @@ const settingsIcon = () => '<svg viewBox="0 0 24 24" fill="none" stroke="current
 const App = {
   tab: 'today',
   reviewTab: 'weekly',
+  timelineView: 'week',       // 时间轴：week / month
+  timelineDate: Store ? Store.todayStr() : '',
+  todayViewDate: Store ? Store.todayStr() : '', // 今日页当前查看日期
   ocrDraft: null,
   pendingGoal: null,
   longPressTimer: null,
   doneExpanded: false,        // 今日页「已完成」折叠
   doneGoalsExpanded: false,   // 目标页「已完成」折叠
   reviewDoneExpanded: false,  // 复盘页「已完成明细」折叠
-  moodLabels: { '😊': '状态不错', '😐': '一般般', '😔': '有点累' }
+  moodLabels: { '😊': '状态不错', '😐': '一般般', '😔': '有点累' },
+  inboxTag: '',               // 灵感箱当前手动选中的标签
+  inboxTagRec: '',            // 灵感箱AI推荐的标签
+  backlogFilter: ''           // 待办页标签筛选
 };
 
 /* ================= 初始化 ================= */
@@ -116,7 +122,7 @@ function renderHeader() {
         </div>
       </div>`;
   } else {
-    const titles = { goals: '目标', backlog: '待办', review: '复盘' };
+    const titles = { goals: '目标', backlog: '待办', timeline: '时间轴', review: '复盘' };
     // 副标题：每个页面第一眼的总览
     let sub = '';
     if (App.tab === 'goals') {
@@ -125,6 +131,8 @@ function renderHeader() {
       sub = `进行中 ${active} 个 · 已完成 ${done} 个`;
     } else if (App.tab === 'backlog') {
       sub = `共 ${store.backlog.length} 件`;
+    } else if (App.tab === 'timeline') {
+      sub = App.timelineView === 'week' ? '周视图 · 拖动待办到日期' : '月视图 · 任务密度';
     } else if (App.tab === 'review') {
       sub = App.reviewTab === 'weekly' ? '每周回顾' : '每月回顾';
     }
@@ -164,6 +172,7 @@ function renderView() {
   if (App.tab === 'today') $v.innerHTML = renderToday();
   else if (App.tab === 'goals') $v.innerHTML = renderGoals();
   else if (App.tab === 'backlog') $v.innerHTML = renderBacklog();
+  else if (App.tab === 'timeline') $v.innerHTML = renderTimeline();
   else if (App.tab === 'review') $v.innerHTML = renderReview();
   if (replay) { void $v.offsetWidth; $v.classList.add('view-enter'); }
   // 异步 AI 个性化：防抖合并调度，避免每次点击都触发多个网络请求
@@ -268,6 +277,8 @@ function adjustSlot(id) {
 
 /** 拖拽排序：把任务移到目标任务所在位置，并跟随其槽位 */
 let _dragId = null;
+let _dragPoolId = null;     // 待办池拖拽中的任务 id
+let _dragPoolFrom = '';     // 来源：backlog / today / day
 function moveTask(fromId, toId) {
   const store = Store.load();
   const arr = store.today.tasks;
@@ -284,8 +295,16 @@ function moveTask(fromId, toId) {
 function renderToday() {
   const store = Store.load();
   ensureRouteSuggestions(store);
-  const undone = store.today.tasks.filter(t => !t.done);
-  const doneTasks = store.today.tasks.filter(t => t.done);
+  // 当前查看的日期（顶部日期导航条切换）。今天用 store.today，其他日期用 dayTasks
+  const viewDate = App.todayViewDate || Store.todayStr();
+  App.todayViewDate = viewDate;
+  const tasksForDate = (d) => {
+    if (d === Store.todayStr()) return store.today.tasks;
+    return (store.dayTasks && store.dayTasks[d]) || [];
+  };
+  const viewTasks = tasksForDate(viewDate);
+  const undone = viewTasks.filter(t => !t.done);
+  const doneTasks = viewTasks.filter(t => t.done);
   const totalMin = undone.reduce((s, t) => s + (t.estMin || 0), 0);
   const budget = 180;
   const freeMin = Math.max(0, budget - totalMin);
@@ -321,11 +340,12 @@ function renderToday() {
     else if (minTxt) tags += `<span class="time">${minTxt}</span>`;
     // 第二行右侧：顺路显示动线描述，否则显示原因（都不重复出现）
     const note = sug ? (t.routeNote || slotByKey[t.slot].hint || '') : (t.why || '');
+    const tagDot = t.tag ? `<span class="tag-dot ${t.tag}" title="${AI.TAGS[t.tag] ? AI.TAGS[t.tag].name : ''}"></span>` : '';
     return `
       <li class="task ${t.done ? 'done' : ''}${t.doing ? ' doing' : ''}${sug ? ' has-sug' : ''}" data-action="task:detail" data-id="${t.id}" ${t.done ? '' : 'draggable="true" title="点击查看详情 · 拖拽可调整顺序"'}">
         <span class="check" data-action="task:check" data-id="${t.id}">${t.done ? '🌱' : ''}</span>
         <div class="task-body">
-          <span class="task-text">${esc(t.text)}</span>
+          <span class="task-text">${tagDot}${esc(t.text)}</span>
           <span class="task-meta">${tags}${note ? `<span class="hint">${esc(note)}</span>` : ''}</span>
           ${sug ? `
             <div class="route-acts">
@@ -416,16 +436,47 @@ function renderToday() {
 
   // 灵感箱 / 待办 / 目标进度已分别归属「待办页 / 目标页」；今日页只聚焦「今天要做什么」
 
+  // 顶部日期导航条：本周 周一~周日，可前后翻周；选中日期切换当日视图
+  const navStart = Store.startOfWeek(viewDate);
+  const navDays = Store.weekDates(viewDate).map(d => {
+    const isToday = d === Store.todayStr();
+    const isSel = d === viewDate;
+    const dt = new Date(d + 'T00:00:00');
+    const dd = dt.getDate();
+    const tasks = tasksForDate(d);
+    const doneN = tasks.filter(t => t.done).length;
+    const totalN = tasks.length;
+    return `<button class="dn-day${isSel ? ' on' : ''}${isToday ? ' today' : ''}" data-action="today:date" data-date="${d}">
+        <span class="dn-dow">${Store.fmtDOW(d)}</span>
+        <span class="dn-date">${dd}</span>
+        <span class="dn-count">${totalN ? `${doneN}/${totalN}` : '·'}</span>
+      </button>`;
+  }).join('');
+  const dateNav = `
+    <div class="date-nav">
+      <button class="dn-arrow" data-action="today:week" data-dir="-1" aria-label="上一周">‹</button>
+      <div class="dn-days">${navDays}</div>
+      <button class="dn-arrow" data-action="today:week" data-dir="1" aria-label="下一周">›</button>
+    </div>
+    <div class="date-nav-sub">
+      <button class="dn-today${viewDate === Store.todayStr() ? ' on' : ''}" data-action="today:date" data-date="${Store.todayStr()}">回到今天</button>
+      <span class="dn-viewing">${viewDate === Store.todayStr() ? '今天' : Store.fmtMD(viewDate)} · ${undone.length} 件待办</span>
+    </div>`;
+
+  const isTodayView = viewDate === Store.todayStr();
+
   return `
     <div class="today-stack">
 
       ${hero}
 
+      ${dateNav}
+
       ${p0Card}
 
       ${overviewBar}
 
-      ${pendingCount ? `
+      ${isTodayView && pendingCount ? `
         <div class="confirm-all">
           <span class="label">🛣 墨已把任务放进你的动线</span>
           <button class="btn" data-action="task:accept-all">一键全确认</button>
@@ -445,12 +496,13 @@ function renderToday() {
           </div>`).join('')}
       </div>
 
-      ${fragCard}
+      ${isTodayView ? fragCard : ''}
 
       ${doneSection}
 
-      <button class="end-day-ghost" data-action="day:end">🌙 今天做完了？结束今天</button>
+      ${isTodayView ? `<button class="end-day-ghost" data-action="day:end">🌙 今天做完了？结束今天</button>` : ''}
 
+      ${isTodayView ? `
       <div class="today-bottom">
         <button class="backlog-entry" data-action="tab:switch" data-tab="backlog">
           📋 待办 <span class="n">${store.backlog.length}</span> 件
@@ -461,9 +513,9 @@ function renderToday() {
         <button class="quick-ic" data-action="camera:open" title="拍照识别" aria-label="拍照识别">
           <span class="qi-ic">📷</span><span class="qi-lb">拍照</span>
         </button>
-      </div>
+      </div>` : ''}
 
-      <div class="end-note">✦ 今天做完这些就够了 ✦</div>
+      <div class="end-note">${isTodayView ? '✦ 今天做完这些就够了 ✦' : '✦ 这是你选定的某一天 ✦'}</div>
     </div>`;
 }
 
@@ -584,6 +636,185 @@ function calcStreak() {
   return n;
 }
 
+/* ================= 时间轴页（周视图 + 月视图 + 拖拽待办池） ================= */
+
+/* 取某一天的全部已排任务（今日用 store.today；其他日期用 dayTasks） */
+function dayTaskList(date) {
+  const store = Store.load();
+  if (date === Store.todayStr()) return store.today.tasks;
+  return (store.dayTasks && store.dayTasks[date]) || [];
+}
+function scheduledCount(date) { return dayTaskList(date).length; }
+
+/** 把任务安排到指定日期：来自待办池 / 今日 / 其他日 */
+function moveTaskToDate(id, date, from) {
+  const store = Store.load();
+  const t = Store.todayStr();
+  // 先从来源处取出任务对象（再移除，避免找不到）
+  let taskObj = null;
+  const pull = arr => { const i = arr.findIndex(x => x.id === id); if (i >= 0) { taskObj = arr[i]; arr.splice(i, 1); return true; } return false; };
+  if (from === 'backlog') pull(store.backlog);
+  else if (from === 'today' || (from === 'day' && date === t)) pull(store.today.tasks);
+  else if (from === 'day') {
+    if (store.dayTasks && store.dayTasks[date]) pull(store.dayTasks[date]);
+  }
+  // 兜底：若来源未知，全局查找
+  if (!taskObj) {
+    const findIn = arr => { const x = arr.find(y => y.id === id); if (x) taskObj = x; };
+    findIn(store.backlog); findIn(store.today.tasks);
+    if (store.dayTasks) Object.values(store.dayTasks).forEach(findIn);
+    if (taskObj) { // 找到就从原处删
+      const rm = arr => { const i = arr.findIndex(x => x.id === id); if (i >= 0) arr.splice(i, 1); };
+      rm(store.backlog); rm(store.today.tasks);
+      if (store.dayTasks) Object.values(store.dayTasks).forEach(rm);
+    }
+  }
+  if (!taskObj) return;
+  if (date === t) {
+    taskObj.slot = taskObj.slot || 'night';
+    taskObj.matched = true;
+    store.today.tasks.push(taskObj);
+  } else {
+    store.dayTasks = store.dayTasks || {};
+    store.dayTasks[date] = store.dayTasks[date] || [];
+    store.dayTasks[date].push(taskObj);
+  }
+  Store.save();
+  render();
+}
+
+/** 打开"安排到哪一天"的底部浮层（移动端无拖拽时的备选） */
+function openAssignSheet(id, from) {
+  const store = Store.load();
+  const start = Store.startOfWeek(Store.todayStr());
+  const days = Store.weekDates(Store.todayStr()).map(d => {
+    const isT = d === Store.todayStr();
+    return `<button class="sheet-day" data-action="assign:pick" data-id="${id}" data-from="${from}" data-date="${d}">
+      <span>${isT ? '今天' : Store.fmtDOW(d)}</span><small>${Store.fmtMD(d)}</small>
+      <em>${scheduledCount(d)}件</em></button>`;
+  }).join('');
+  openSheet(`
+    <div class="sheet">
+      <div class="sheet-head">安排到哪一天</div>
+      <div class="sheet-days">${days}</div>
+      <button class="sheet-cancel" data-action="modal:close">取消</button>
+    </div>`);
+}
+
+function renderTimeline() {
+  const store = Store.load();
+  const view = App.timelineView || 'week';
+  const base = App.timelineDate || Store.todayStr();
+
+  // 周/月切换 + 翻页
+  const seg = `
+    <div class="timeline-seg">
+      <button class="seg-btn${view === 'week' ? ' on' : ''}" data-action="timeline:view" data-view="week">周</button>
+      <button class="seg-btn${view === 'month' ? ' on' : ''}" data-action="timeline:view" data-view="month">月</button>
+    </div>`;
+
+  let body = '';
+  if (view === 'week') {
+    const start = Store.startOfWeek(base);
+    const days = Store.weekDates(base);
+    const cols = days.map(d => {
+      const list = dayTaskList(d);
+      const isT = d === Store.todayStr();
+      const isSel = d === base;
+      const items = list.length ? list.map(t => {
+        const tagDot = t.tag ? `<span class="tag-dot ${t.tag}" title="${AI.TAGS[t.tag] ? AI.TAGS[t.tag].name : ''}"></span>` : '';
+        const pri = t.priority ? '<span class="wc-prio">优先</span>' : '';
+        const done = t.done ? ' done' : '';
+        return `<div class="wc-task${done}" data-action="timeline:task" data-id="${t.id}" data-date="${d}">
+          ${tagDot}<span class="wc-text">${esc(t.text)}</span>${pri}${t.done ? '<span class="wc-done">✓</span>' : ''}
+        </div>`;
+      }).join('') : '<div class="wc-empty">—</div>';
+      const conflict = AI.dragConflict(d, 0);
+      const warn = conflict && conflict.level === 'warn' ? ' warn' : '';
+      return `<div class="week-col${isSel ? ' on' : ''}${isT ? ' today' : ''}" data-action="timeline:day" data-date="${d}">
+        <div class="wc-head"><span class="wc-dow">${Store.fmtDOW(d)}</span><span class="wc-date">${Store.fmtMD(d)}</span><span class="wc-n">${list.length}</span></div>
+        <div class="wc-list${warn}">${items}</div>
+      </div>`;
+    }).join('');
+    // 待办池：来自待办列表（未排进今日/时间线的）
+    const pool = store.backlog.length ? store.backlog.map(b => {
+      const tagDot = b.tag ? `<span class="tag-dot ${b.tag}"></span>` : '';
+      return `<div class="pool-item" draggable="true" data-action="pool:pick" data-id="${b.id}" data-from="backlog" data-text="${esc(b.text)}">
+        ${tagDot}<span class="pool-text">${esc(b.text)}</span>
+        <button class="pool-assign" data-action="pool:assign" data-id="${b.id}">安排</button>
+      </div>`;
+    }).join('') : '<div class="pool-empty">待办池空了，去灵感箱加点想法吧 ✨</div>';
+    body = `
+      <div class="timeline-page week-mode">
+        <div class="timeline-nav">
+          <button class="dn-arrow" data-action="timeline:page" data-dir="-1">‹</button>
+          <div class="tl-week-label">${Store.fmtMD(start)} 当周</div>
+          <button class="dn-arrow" data-action="timeline:page" data-dir="1">›</button>
+        </div>
+        <div class="week-grid">${cols}</div>
+        <div class="pool">
+          <div class="pool-title">📥 待办池 · 拖动到上面任意一天，或点"安排"</div>
+          <div class="pool-list">${pool}</div>
+        </div>
+      </div>`;
+  } else {
+    // 月视图
+    const yr = new Date(base + 'T00:00:00').getFullYear();
+    const mo = new Date(base + 'T00:00:00').getMonth();
+    const firstDow = (new Date(yr, mo, 1).getDay() + 6) % 7; // 周一为0
+    const daysInMonth = Store.monthDays(yr, mo + 1);
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(`${yr}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    while (cells.length % 7 !== 0) cells.push(null);
+    const monthTotal = cells.filter(Boolean).reduce((s, d) => s + scheduledCount(d), 0);
+    const grid = cells.map(d => {
+      if (!d) return `<div class="month-cell empty"></div>`;
+      const n = scheduledCount(d);
+      const dens = AI.monthDensity(n);
+      const isT = d === Store.todayStr();
+      const dot = n ? `<span class="density-dot" style="--size:${dens.size}px;--color:${dens.color}"></span>` : '';
+      return `<div class="month-cell${isT ? ' today' : ''}" data-action="timeline:day" data-date="${d}">
+        <span class="mc-date">${Number(d.split('-')[2])}</span>
+        ${dot}
+        <span class="mc-n">${n || ''}</span>
+      </div>`;
+    }).join('');
+    // 月度小结
+    const freeDays = cells.filter(Boolean).filter(d => scheduledCount(d) === 0).length;
+    const busyDay = cells.filter(Boolean).reduce((best, d) => { const n = scheduledCount(d); return n > best.n ? { d, n } : best; }, { d: '', n: 0 });
+    let advise = '';
+    if (monthTotal === 0) advise = AI.copy('month_summary_light');
+    else if (monthTotal < 40) advise = AI.copy('month_summary_light');
+    else if (monthTotal < 90) advise = AI.copy('month_summary_medium');
+    else advise = AI.copy('month_summary_heavy');
+    if (busyDay.n >= 8) advise += ' ' + AI.copy('month_busy_day', { day: busyDay.d ? Store.fmtMD(busyDay.d) : '', n: busyDay.n });
+    if (freeDays >= 7) advise += ' ' + AI.copy('month_free_days', { n: freeDays });
+    body = `
+      <div class="timeline-page month-mode">
+        <div class="timeline-nav">
+          <button class="dn-arrow" data-action="timeline:page" data-dir="-1">‹</button>
+          <div class="tl-week-label">${yr}年${mo + 1}月</div>
+          <button class="dn-arrow" data-action="timeline:page" data-dir="1">›</button>
+        </div>
+        <div class="month-grid">
+          <div class="month-weekdays"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+          ${grid}
+        </div>
+        <div class="month-summary">
+          <div class="ms-total">本月共安排 <strong>${monthTotal}</strong> 件任务</div>
+          <div class="ms-advise">${advise}</div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="timeline-wrap">
+      <div class="timeline-header">${seg}</div>
+      ${body}
+    </div>`;
+}
+
 /* ================= 待办页 ================= */
 function renderBacklog() {
   const store = Store.load();
@@ -602,6 +833,18 @@ function renderBacklog() {
       </div>`;
   }).join('') : '<div class="inbox-empty">想法存下后会自动收进下面的待办 ✨</div>';
 
+  // 灵感箱存入时的标签选择：AI 推荐 + 手动覆盖
+  const recTag = App.inboxTagRec || (App.inboxTag ? AI.autoTag('').tag : '');
+  const sel = App.inboxTag || App.inboxTagRec || '';
+  const tagChips = Object.keys(AI.TAGS).map(k => {
+    const t = AI.TAGS[k];
+    const on = sel === k;
+    const isRec = App.inboxTagRec === k && !App.inboxTag;
+    return `<button class="tag-chip ${k}${on ? ' on' : ''}${isRec ? ' rec' : ''}" data-action="inbox:tag" data-tag="${k}">
+      <span class="dot"></span>${t.name}${isRec ? '<span class="rec-badge">AI推荐</span>' : ''}
+    </button>`;
+  }).join('');
+
   const inboxCard = `
     <section class="card inbox-card">
       <div class="card-title">
@@ -612,6 +855,8 @@ function renderBacklog() {
         <input class="input inbox-input" id="inbox-input" placeholder="冒出什么想法？先写在这里…">
         <button class="btn inbox-save" data-action="inbox:add">存入</button>
       </div>
+      <div class="tag-select-tip">存入时选择分类（${sel ? '已选：' + (AI.TAGS[sel] ? AI.TAGS[sel].name : '') : '留空则由 AI 稍后推荐'}）</div>
+      <div class="tag-row">${tagChips}</div>
       <div class="inbox-list">${inboxHtml}</div>
     </section>`;
 
@@ -638,9 +883,18 @@ function renderBacklog() {
     </div>`)
   ].join('');
 
-  // 按日期分组
+  // 标签筛选切换栏
+  const filterChips = ['', ...Object.keys(AI.TAGS)].map(k => {
+    const name = k === '' ? '全部' : AI.TAGS[k].name;
+    const on = App.backlogFilter === k;
+    return `<button class="filter-chip${k ? ' ' + k : ''}${on ? ' on' : ''}" data-action="backlog:filter" data-tag="${k}">
+      ${k ? `<span class="dot"></span>` : ''}${name}</button>`;
+  }).join('');
+
+  // 按日期分组（先按当前筛选过滤）
+  const filtered = App.backlogFilter ? store.backlog.filter(b => (b.tag || '') === App.backlogFilter) : store.backlog;
   const groups = {};
-  store.backlog.forEach(b => { (groups[b.originalDate] = groups[b.originalDate] || []).push(b); });
+  filtered.forEach(b => { (groups[b.originalDate] = groups[b.originalDate] || []).push(b); });
   const dates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
 
   const groupHtml = dates.map(d => `
@@ -649,11 +903,12 @@ function renderBacklog() {
       <ul class="task-list">
         ${groups[d].map(b => {
           const frag = AI.isFragTask(b.text, b.estMin) ? '<span class="bolt" title="适合碎片时间">⚡</span>' : '';
+          const tagDot = b.tag ? `<span class="tag-dot ${b.tag}" title="${AI.TAGS[b.tag] ? AI.TAGS[b.tag].name : ''}"></span>` : '';
           return `
           <li class="task" data-action="backlog:detail" data-id="${b.id}" title="点击查看详情 · 左滑或长按可操作">
             <span class="check"></span>
             <div class="task-body">
-              <span class="task-text">${esc(b.text)}${frag}${b.originalDate !== Store.todayStr() ? ' <span class="roll-tag">🍃 顺延</span>' : ''}${b.priority ? ' <span class="prio-tag">优先</span>' : ''}</span>
+              <span class="task-text">${tagDot}${esc(b.text)}${frag}${b.originalDate !== Store.todayStr() ? ' <span class="roll-tag">🍃 顺延</span>' : ''}${b.priority ? ' <span class="prio-tag">优先</span>' : ''}</span>
               <span class="task-meta">${b.estMin ? `${b.estMin}分钟` : '未估时'}</span>
             </div>
             <span class="flag"></span>
@@ -665,12 +920,13 @@ function renderBacklog() {
           </li>`;
         }).join('')}
       </ul>
-    </div>`).join('') || '<div class="card" style="text-align:center;color:var(--ink-2)">待办是空的，今天的计划都可以在纸上完成。</div>';
+    </div>`).join('') || '<div class="card" style="text-align:center;color:var(--ink-2)">这个分类下还没有待办，换个标签看看？</div>';
 
   return `
     <div class="page-stack backlog-page">
       ${inboxCard}
       ${remind}
+      <div class="filter-bar">${filterChips}</div>
       ${groupHtml}
       <div class="tip-line">左滑 → 编辑 / 移动 / 删除 · 长按 → 更多操作</div>
       <div class="end-line">—— 没有更多了 ——</div>
@@ -689,11 +945,17 @@ function inboxAdd(text) {
   const store = Store.load();
   const txt = String(text || '').trim();
   if (!txt) return;
+  // AI 自动标签：用户未手动选时给出推荐，存入后记录
+  const tag = App.inboxTag || (AI.autoTag(txt).tag || '');
   // 灵感箱 → 待办联动：存入即自动收进待办列表（今天分组）
-  store.backlog.unshift({ id: Store.uid(), text: txt, estMin: 15, priority: false, originalDate: Store.todayStr(), why: '' });
+  store.backlog.unshift({ id: Store.uid(), text: txt, estMin: 15, priority: false, originalDate: Store.todayStr(), why: '', tag });
+  if (tag) AI.recordTag(txt, tag);
   store.flags.tabDots = { ...(store.flags.tabDots || {}), backlog: true };
+  App.inboxTag = '';
+  App.inboxTagRec = '';
   Store.save();
-  aiToast('inbox_captured');
+  if (tag) aiToast('tag_saved', { task: txt, tag: AI.TAGS[tag] ? AI.TAGS[tag].name : '' });
+  else aiToast('inbox_captured');
   render();
 }
 function inboxToToday(id) {
@@ -1124,6 +1386,9 @@ function runSheetAction(a, id) {
     case 'backlog:to-today': restoreToToday(id); break;
     case 'backlog:edit': openTaskEdit(id, 'backlog'); break;
     case 'backlog:del': doBacklogDelete(id); break;
+    case 'day:to-today': dayToToday(id, btn.dataset.date); break;
+    case 'day:edit': openTaskEdit(id, 'day:' + btn.dataset.date); break;
+    case 'day:del': dayDelete(id, btn.dataset.date); break;
     case 'achieve:archive': archiveGoal(id); break;
     case 'achieve:keep': keepGoal(id); break;
   }
@@ -1132,10 +1397,12 @@ function runSheetAction(a, id) {
 /* 任务详情浮层：点击任务卡片弹出（毛玻璃，不跳转页面） */
 function openTaskDetail(id, source) {
   const store = Store.load();
-  const arr = source === 'today' ? store.today.tasks : store.backlog;
+  let arr, isToday = false, isDay = false, dayDate = '';
+  if (source === 'today') { arr = store.today.tasks; isToday = true; }
+  else if (source && source.indexOf('day:') === 0) { dayDate = source.slice(4); arr = (store.dayTasks && store.dayTasks[dayDate]) || []; isDay = true; }
+  else { arr = store.backlog; }
   const t = arr.find(x => x.id === id);
   if (!t) return;
-  const isToday = source === 'today';
   const sug = isToday && t.slot ? AI.buildSlots(Store.todayStr()).find(s => s.key === t.slot) : null;
   const frag = AI.isFragTask(t.text, t.estMin);
   const rows = `
@@ -1152,9 +1419,13 @@ function openTaskDetail(id, source) {
          <button class="btn-ghost" data-sheet="task:edit" data-id="${t.id}">✏️ 编辑</button>
          <button class="btn-ghost" data-sheet="task:to-backlog" data-id="${t.id}">移到待办</button>
          <button class="btn-danger" data-sheet="task:del" data-id="${t.id}">删除</button>`)
-    : `<button class="btn-primary" data-sheet="backlog:to-today" data-id="${t.id}">排进今日</button>
-       <button class="btn-ghost" data-sheet="backlog:edit" data-id="${t.id}">✏️ 编辑</button>
-       <button class="btn-danger" data-sheet="backlog:del" data-id="${t.id}">删除</button>`;
+    : isDay
+      ? `<button class="btn-primary" data-sheet="day:to-today" data-id="${t.id}" data-date="${dayDate}">排进今日</button>
+         <button class="btn-ghost" data-sheet="day:edit" data-id="${t.id}" data-date="${dayDate}">✏️ 编辑</button>
+         <button class="btn-danger" data-sheet="day:del" data-id="${t.id}" data-date="${dayDate}">删除</button>`
+      : `<button class="btn-primary" data-sheet="backlog:to-today" data-id="${t.id}">排进今日</button>
+         <button class="btn-ghost" data-sheet="backlog:edit" data-id="${t.id}">✏️ 编辑</button>
+         <button class="btn-danger" data-sheet="backlog:del" data-id="${t.id}">删除</button>`;
   openSheet(`
     <div class="sheet">
       <div class="sheet-title">${esc(t.text)}</div>
@@ -1188,7 +1459,10 @@ function openTaskMenu(id, source) {
 function openTaskEdit(id, source) {
   actionToast('已进入编辑模式');
   const store = Store.load();
-  const arr = source === 'today' ? store.today.tasks : store.backlog;
+  let arr, dayDate = '';
+  if (source === 'today') arr = store.today.tasks;
+  else if (source && source.indexOf('day:') === 0) { dayDate = source.slice(4); arr = (store.dayTasks && store.dayTasks[dayDate]) || []; }
+  else arr = store.backlog;
   const t = arr.find(x => x.id === id);
   if (!t) return;
   openModal(modalShell(
@@ -1209,7 +1483,10 @@ function openTaskEdit(id, source) {
 /* 保存编辑（支持撤销） */
 function saveTaskEdit(id, source) {
   const store = Store.load();
-  const arr = source === 'today' ? store.today.tasks : store.backlog;
+  let arr, dayDate = '';
+  if (source === 'today') arr = store.today.tasks;
+  else if (source && source.indexOf('day:') === 0) { dayDate = source.slice(4); arr = (store.dayTasks && store.dayTasks[dayDate]) || []; }
+  else arr = store.backlog;
   const t = arr.find(x => x.id === id);
   if (!t) return;
   const old = { text: t.text, estMin: t.estMin, priority: t.priority };
@@ -1223,7 +1500,10 @@ function saveTaskEdit(id, source) {
   render();
   actionToast('已保存修改', () => {
     const st = Store.load();
-    const tt = (source === 'today' ? st.today.tasks : st.backlog).find(x => x.id === id);
+    let tt;
+    if (source === 'today') tt = st.today.tasks.find(x => x.id === id);
+    else if (source && source.indexOf('day:') === 0) tt = ((st.dayTasks && st.dayTasks[dayDate]) || []).find(x => x.id === id);
+    else tt = st.backlog.find(x => x.id === id);
     if (tt) { tt.text = old.text; tt.estMin = old.estMin; tt.priority = old.priority; }
     Store.save(); render();
   });
@@ -1615,6 +1895,35 @@ function bindEvents() {
       if (v) { inboxAdd(v); e.target.value = ''; }
     }
   });
+  // 灵感箱：输入时实时给 AI 推荐标签（用户未手动选时）
+  document.addEventListener('input', e => {
+    if (e.target && e.target.id === 'inbox-input') {
+      const v = e.target.value.trim();
+      const next = v ? AI.autoTag(v) : { tag: '' };
+      if (App.inboxTag) return; // 手动选了就别覆盖
+      if (App.inboxTagRec !== next.tag) {
+        App.inboxTagRec = next.tag;
+        // 仅刷新灵感箱卡片区域，避免整页重绘打断输入
+        const card = document.querySelector('.inbox-card');
+        if (card) {
+          const store = Store.load();
+          const inboxHtml = store.inbox.length ? '' : '<div class="inbox-empty">想法存下后会自动收进下面的待办 ✨</div>';
+          // 复用 renderBacklog 局部：用 innerHTML 替换 tag-row 与 tip
+          const sel = App.inboxTag || App.inboxTagRec || '';
+          const tagChips = Object.keys(AI.TAGS).map(k => {
+            const t = AI.TAGS[k];
+            const on = sel === k;
+            const isRec = App.inboxTagRec === k && !App.inboxTag;
+            return `<button class="tag-chip ${k}${on ? ' on' : ''}${isRec ? ' rec' : ''}" data-action="inbox:tag" data-tag="${k}"><span class="dot"></span>${t.name}${isRec ? '<span class="rec-badge">AI推荐</span>' : ''}</button>`;
+          }).join('');
+          const tip = card.querySelector('.tag-select-tip');
+          const row = card.querySelector('.tag-row');
+          if (tip) tip.textContent = `存入时选择分类（${sel ? '已选：' + (AI.TAGS[sel] ? AI.TAGS[sel].name : '') : '留空则由 AI 稍后推荐'}）`;
+          if (row) row.innerHTML = tagChips;
+        }
+      }
+    }
+  });
 
   // 时间线拖拽排序（桌面端；手机端用"调整"按钮）
   document.addEventListener('dragstart', e => {
@@ -1623,24 +1932,56 @@ function bindEvents() {
       _dragId = li.dataset.id;
       li.classList.add('dragging');
       if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+      return;
+    }
+    // 待办池任务拖到周视图的某一天
+    const pool = e.target.closest('.pool-item');
+    if (pool) {
+      _dragPoolId = pool.dataset.id;
+      _dragPoolFrom = pool.dataset.from;
+      pool.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', pool.dataset.id); }
     }
   });
   document.addEventListener('dragover', e => {
     const li = e.target.closest('.task');
-    if (li && _dragId && li.dataset.id !== _dragId) e.preventDefault();
+    if (li && _dragId && li.dataset.id !== _dragId) { e.preventDefault(); return; }
+    const col = e.target.closest('.week-col');
+    if (col && _dragPoolId) {
+      e.preventDefault();
+      col.classList.add('drop-hot');
+    }
   });
   document.addEventListener('drop', e => {
     const li = e.target.closest('.task');
-    if (!li || !_dragId || li.dataset.id === _dragId) return;
-    e.preventDefault();
-    moveTask(_dragId, li.dataset.id);
-    _dragId = null;
-    render();
+    if (li && _dragId && li.dataset.id !== _dragId) {
+      e.preventDefault();
+      moveTask(_dragId, li.dataset.id);
+      _dragId = null;
+      render();
+      return;
+    }
+    const col = e.target.closest('.week-col');
+    if (col && _dragPoolId) {
+      e.preventDefault();
+      const date = col.dataset.date;
+      const id = _dragPoolId, from = _dragPoolFrom;
+      document.querySelectorAll('.week-col.drop-hot').forEach(c => c.classList.remove('drop-hot'));
+      const c = AI.dragConflict(date, 1);
+      if (c && c.level === 'block') { toast('这天已经排满了，换一天吧。', { ai: true }); _dragPoolId = null; _dragPoolFrom = ''; return; }
+      moveTaskToDate(id, date, from);
+      if (c && c.level === 'warn') toast('这天任务有点多，记得留点空隙。', { ai: true });
+      else aiToast('task_moved_to_date', { task: '', date: Store.fmtMD(date) });
+      _dragPoolId = null; _dragPoolFrom = '';
+    }
   });
   document.addEventListener('dragend', e => {
     const li = e.target.closest('.task');
     if (li) li.classList.remove('dragging');
-    _dragId = null;
+    const pool = e.target.closest('.pool-item');
+    if (pool) pool.classList.remove('dragging');
+    document.querySelectorAll('.week-col.drop-hot').forEach(c => c.classList.remove('drop-hot'));
+    _dragId = null; _dragPoolId = null; _dragPoolFrom = '';
   });
 
   // 深色模式跟随系统
@@ -1800,7 +2141,74 @@ function onClick(e) {
     case 'inbox:del': inboxDel(id); break;
     case 'inbox:copy': inboxCopy(id); break;
     case 'inbox:focus': focusInbox(); break;
+    case 'inbox:tag': {
+      const t = btn.dataset.tag;
+      if (App.inboxTag === t) { App.inboxTag = ''; App.inboxTagRec = ''; }
+      else { App.inboxTag = t; }
+      render();
+      break;
+    }
+    case 'backlog:filter': {
+      const t = btn.dataset.tag || '';
+      App.backlogFilter = (App.backlogFilter === t) ? '' : t;
+      render();
+      break;
+    }
     case 'day:end': endToday(); break;
+    case 'today:date': App.todayViewDate = btn.dataset.date || Store.todayStr(); render(); break;
+    case 'today:week': {
+      const dir = Number(btn.dataset.dir) || 0;
+      const base = App.todayViewDate || Store.todayStr();
+      App.todayViewDate = Store.shiftDate(Store.startOfWeek(base), dir * 7);
+      render();
+      break;
+    }
+    case 'timeline:view': App.timelineView = btn.dataset.view || 'week'; render(); break;
+    case 'timeline:page': {
+      const dir = Number(btn.dataset.dir) || 0;
+      const base = App.timelineDate || Store.todayStr();
+      if (App.timelineView === 'month') {
+        const d = new Date(base + 'T00:00:00');
+        d.setMonth(d.getMonth() + dir);
+        App.timelineDate = Store.toYMD(d);
+      } else {
+        App.timelineDate = Store.shiftDate(Store.startOfWeek(base), dir * 7);
+      }
+      render();
+      break;
+    }
+    case 'timeline:day': {
+      const d = btn.dataset.date;
+      App.todayViewDate = d;
+      App.tab = 'today';
+      render();
+      break;
+    }
+    case 'timeline:task': {
+      const d = btn.dataset.date, id = btn.dataset.id;
+      openTaskDetail(id, d === Store.todayStr() ? 'today' : 'day:' + d);
+      break;
+    }
+    case 'pool:pick': {
+      const id = btn.dataset.id, from = btn.dataset.from;
+      App._dragPoolFrom = from;
+      break;
+    }
+    case 'pool:assign': {
+      const id = btn.dataset.id, from = btn.dataset.from;
+      openAssignSheet(id, from);
+      break;
+    }
+    case 'assign:pick': {
+      const id = btn.dataset.id, from = btn.dataset.from, d = btn.dataset.date;
+      const c = AI.dragConflict(d, 1);
+      if (c && c.level === 'block') { toast('这天已经排满了，换一天吧。', { ai: true }); return; }
+      moveTaskToDate(id, d, from);
+      if (c && c.level === 'warn') toast('这天任务有点多，记得留点空隙。', { ai: true });
+      else aiToast('task_moved_to_date', { task: '', date: Store.fmtMD(d) });
+      break;
+    }
+    case 'modal:close': closeModal(); break;
     case 'home-inbox:add': {
       const hinp = $('#home-inbox-input');
       if (hinp && hinp.value.trim()) { inboxAdd(hinp.value); hinp.value = ''; }
@@ -2054,6 +2462,53 @@ function doBacklogDiscard(id) {
     const st = Store.load();
     st.backlog.splice(Math.min(idx, st.backlog.length), 0, b);
     Store.save(); render();
+  });
+}
+
+/* 把某天（dayTasks）的任务排进今日 */
+function dayToToday(id, date) {
+  const store = Store.load();
+  const list = (store.dayTasks && store.dayTasks[date]) || [];
+  const t = list.find(x => x.id === id);
+  if (!t) return;
+  const nt = { id: Store.uid(), text: t.text, estMin: t.estMin, priority: t.priority, done: false, goalId: null, why: t.why || '', slot: t.slot || 'night', matched: true, routeNote: t.routeNote || '' };
+  store.today.tasks.push(nt);
+  store.dayTasks[date] = list.filter(x => x.id !== id);
+  if (!store.dayTasks[date].length) delete store.dayTasks[date];
+  Store.save();
+  render();
+  actionToast(`已把"${t.text}"排进今日`, () => {
+    const st = Store.load();
+    st.today.tasks = st.today.tasks.filter(x => x.id !== nt.id);
+    st.dayTasks = st.dayTasks || {};
+    st.dayTasks[date] = st.dayTasks[date] || [];
+    st.dayTasks[date].unshift(t);
+    Store.save(); render();
+  });
+}
+
+/* 删除某天的任务 */
+function dayDelete(id, date) {
+  const store = Store.load();
+  const list = (store.dayTasks && store.dayTasks[date]) || [];
+  const t = list.find(x => x.id === id);
+  if (!t) return;
+  confirmDelete(t.text, () => {
+    const st = Store.load();
+    const arr = (st.dayTasks && st.dayTasks[date]) || [];
+    const idx = arr.findIndex(x => x.id === id);
+    if (idx < 0) return;
+    const [removed] = arr.splice(idx, 1);
+    if (!arr.length && st.dayTasks) delete st.dayTasks[date];
+    Store.save();
+    render();
+    actionToast(`已删除"${removed.text}"`, () => {
+      const st2 = Store.load();
+      st2.dayTasks = st2.dayTasks || {};
+      st2.dayTasks[date] = st2.dayTasks[date] || [];
+      st2.dayTasks[date].splice(Math.min(idx, st2.dayTasks[date].length), 0, removed);
+      Store.save(); render();
+    });
   });
 }
 

@@ -33,6 +33,18 @@ const Store = (() => {
     return out;
   };
 
+  /* ---------- 标签快速分类（仅用于种子数据，避免循环依赖） ---------- */
+  function seedTag(text) {
+    if (!text) return '';
+    if (/ddl|deadline|截止|紧急|优先|今天必须|马上|立刻|尽快/.test(text)) return 'urgent';
+    if (/买菜|做饭|打扫|整理|洗衣服|购物|快递|缴费|拿|买|取|收拾|洗碗|拖地|洗晒|晾衣|洗衣|叠衣|收纳|浇水|扔垃圾|倒垃圾|取快递|拿快递|寄快递/.test(text)) return 'daily';
+    if (/阅读|看书|学习|笔记|写|记|背|练|练习|做题|复习|预习|看文章|写日记|总结|摘抄|思考|大纲|文章|公众号|论文|报告/.test(text)) return 'study';
+    if (/考试|考|考研|考公|考证|模考|刷题|错题|真题|模拟|冲刺|备考|笔试|面试|报名|复习计划|知识点/.test(text)) return 'exam';
+    if (/电影|散步|休息|娱乐|玩|听歌|看剧|旅行|周末|发呆|放松|独处|画画|写字|做手工|园艺|运动|拉伸|冥想|跑步|健身/.test(text)) return 'leisure';
+    if (/朋友|聚会|聊天|约|逛街|探店|见面|吃饭|电话|视频|家人|同事|约饭|下午茶|团建|妈妈|爸爸|邮件|消息/.test(text)) return 'social';
+    return '';
+  }
+
   /* ---------- 种子数据 ---------- */
   function seed() {
     const today = todayStr();
@@ -64,8 +76,8 @@ const Store = (() => {
     completedLog.push({ id: uid(), text: '读《认知觉醒》第3章', date: d9, doneAt: '', estMin: 30, actualMin: 25, mood: '😊', note: '' });
     completedLog.push({ id: uid(), text: '读《认知觉醒》第3章', date: d12, doneAt: '', estMin: 30, actualMin: 30, mood: '😐', note: '' });
 
-    return {
-      version: 4,
+    const result = {
+      version: 5,
       settings: {
         palette: 'lavender', theme: 'system',
         ai: { enabled: false, provider: 'deepseek', apiKey: '', baseUrl: '', model: '' },
@@ -143,8 +155,15 @@ const Store = (() => {
         goalJustDecomposed: null, streakShownDate: null, adjustedShown: {}, skeletonShown: false,
         fragRemind: {},           // { '日期:任务id': 提醒次数 } 碎片建议每日最多2次
         fragBubbleShownDate: null // 右下角「碎片时间气泡」每日只提示一次
-      }
+      },
+      tags: { prefs: {}, history: [], corrections: {} },
+      dayTasks: {}
     };
+    // 给种子数据自动打标签
+    result.today.tasks.forEach(t => { t.tag = seedTag(t.text); });
+    result.backlog.forEach(t => { t.tag = seedTag(t.text); });
+    result.goals.forEach(g => g.tasks.forEach(t => { t.tag = seedTag(t.text); }));
+    return result;
   }
 
   /* ---------- 读写 ---------- */
@@ -198,9 +217,49 @@ const Store = (() => {
         if (t.routeNote === undefined) t.routeNote = '';
       });
     }
+    // v5: 标签系统 + 按日任务池
+    if ((data.version || 0) < 5) {
+      data.version = 5;
+      data.tags = data.tags || { prefs: {}, history: [], corrections: {} };
+      data.dayTasks = data.dayTasks || {};
+      if (data.today && Array.isArray(data.today.tasks)) {
+        data.today.tasks.forEach(t => { if (t.tag === undefined) t.tag = ''; });
+      }
+      if (Array.isArray(data.backlog)) {
+        data.backlog.forEach(b => { if (b.tag === undefined) b.tag = ''; });
+      }
+      if (Array.isArray(data.completedLog)) {
+        data.completedLog.forEach(e => { if (e.tag === undefined) e.tag = ''; });
+      }
+      if (Array.isArray(data.goals)) {
+        data.goals.forEach(g => {
+          if (Array.isArray(g.tasks)) g.tasks.forEach(t => { if (t.tag === undefined) t.tag = ''; });
+        });
+      }
+    }
   }
   function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {} }
   function reset() { localStorage.removeItem(LS_KEY); data = seed(); save(); return data; }
 
-  return { load, save, reset, seed, uid, todayStr, toYMD, shiftDate, fmtMD, fmtDOW, weekdaysBetween, listWeekdays };
+  /* ---------- 日历工具 ---------- */
+  function startOfWeek(ymd) {
+    const d = new Date(ymd + 'T00:00:00');
+    const day = d.getDay(); // 0=周日
+    const diff = day === 0 ? -6 : 1 - day; // 调整到周一
+    d.setDate(d.getDate() + diff);
+    return toYMD(d);
+  }
+  function weekDates(ymd) {
+    const start = startOfWeek(ymd);
+    return Array.from({ length: 7 }, (_, i) => shiftDate(start, i));
+  }
+  function monthDays(year, month) {
+    return new Date(year, month, 0).getDate();
+  }
+  function parseYMD(ymd) {
+    const [y, m, d] = ymd.split('-').map(Number);
+    return { y, m, d };
+  }
+
+  return { load, save, reset, seed, uid, todayStr, toYMD, shiftDate, fmtMD, fmtDOW, weekdaysBetween, listWeekdays, startOfWeek, weekDates, monthDays, parseYMD };
 })();

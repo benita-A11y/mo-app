@@ -158,7 +158,8 @@ const Store = (() => {
       },
       tags: { prefs: {}, history: [], corrections: {} },
       dayTasks: {},
-      weekNotes: {}   // { '周一日期': { focus:'', summary:'' } }
+      weekNotes: {},   // { '周一日期': { focus:'', summary:'' } }
+      monthNotes: {}   // { '2026-08': { focus:'', summary:'' } }
     };
     // 给种子数据自动打标签
     result.today.tasks.forEach(t => { t.tag = seedTag(t.text); });
@@ -224,6 +225,7 @@ const Store = (() => {
       data.tags = data.tags || { prefs: {}, history: [], corrections: {} };
       data.dayTasks = data.dayTasks || {};
       data.weekNotes = data.weekNotes || {};
+      data.monthNotes = data.monthNotes || {};
       if (data.today && Array.isArray(data.today.tasks)) {
         data.today.tasks.forEach(t => { if (t.tag === undefined) t.tag = ''; });
       }
@@ -263,6 +265,17 @@ const Store = (() => {
     return { y, m, d };
   }
   function weekKey(ymd) { return startOfWeek(ymd); }
+  function weekNumber(ymd) {
+    const d = parseYMD(ymd);
+    const date = new Date(d.y, d.m - 1, d.d);
+    const oneJan = new Date(date.getFullYear(), 0, 1);
+    const days = Math.floor((date - oneJan) / 86400000);
+    return Math.ceil((days + oneJan.getDay() + 1) / 7);
+  }
+  function monthKey(ymd) {
+    const [y, m] = ymd.split('-').map(Number);
+    return `${y}-${String(m).padStart(2, '0')}`;
+  }
 
-  return { load, save, reset, seed, uid, todayStr, toYMD, shiftDate, fmtMD, fmtDOW, weekdaysBetween, listWeekdays, startOfWeek, weekDates, monthDays, parseYMD, weekKey };
+  return { load, save, reset, seed, uid, todayStr, toYMD, shiftDate, fmtMD, fmtDOW, weekdaysBetween, listWeekdays, startOfWeek, weekDates, monthDays, parseYMD, weekKey, weekNumber, monthKey };
 })();

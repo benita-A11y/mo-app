@@ -23,6 +23,80 @@ const AI = (() => {
 5. 鼓励进步但从不逼进：大任务主动建议拆小、连续高能量主动提醒留缓冲、状态低时主动减量。
 6. 表达平实、克制、有呼吸感，少用感叹号；中文输出，30~60 字为主。`;
 
+  /* ================= 标签系统（彩虹马卡龙） ================= */
+  const TAGS = {
+    urgent: { key: 'urgent', name: '紧急', color: '#FF6B6B', icon: '🔴' },
+    daily:  { key: 'daily',  name: '日常', color: '#FF9F43', icon: '🟠' },
+    study:  { key: 'study',  name: '自习', color: '#2ED573', icon: '🟢' },
+    exam:   { key: 'exam',   name: '备考', color: '#4A8CFF', icon: '🔵' },
+    leisure:{ key: 'leisure',name: '消遣', color: '#A29BFE', icon: '🟣' },
+    social: { key: 'social', name: '社交', color: '#FD79A8', icon: '🩷' }
+  };
+
+  const TAG_KEYWORDS = {
+    urgent: ['必须','着急','今天','截止','DDL','deadline','最后','马上','立刻','尽快','限时','紧急','重要','优先'],
+    daily:  ['买菜','做饭','打扫','整理','洗衣服','购物','快递','缴费','拿','买','取','收拾','洗碗','拖地','洗晒','晾衣','洗衣','叠衣','收纳'],
+    study:  ['阅读','看书','学习','笔记','写','记','背','练','练习','做题','复习','预习','看文章','写日记','总结','摘抄','思考'],
+    exam:   ['考试','考','考研','考公','考证','模考','刷题','错题','真题','模拟','冲刺','备考','笔试','面试','报名','复习计划','知识点'],
+    leisure:['电影','散步','休息','娱乐','玩','听歌','看剧','旅行','周末','发呆','放松','独处','画画','写字','做手工','园艺'],
+    social: ['朋友','聚会','聊天','约','逛街','探店','见面','吃饭','电话','视频','家人','同事','约饭','下午茶','团建']
+  };
+
+  /** 自动标签分类：关键词匹配 + 置信度 + 用户习惯 */
+  function autoTag(text) {
+    if (!text) return { tag: '', confidence: 0, reason: '' };
+    const store = Store.load();
+    const tags = store.tags || { prefs: {}, history: [], corrections: {} };
+    // 1. 用户修正优先
+    if (tags.corrections && tags.corrections[text]) {
+      return { tag: tags.corrections[text], confidence: 100, reason: '按你之前的选择' };
+    }
+    // 2. 关键词计分
+    const scores = {};
+    Object.keys(TAG_KEYWORDS).forEach(k => {
+      const hits = TAG_KEYWORDS[k].filter(w => text.includes(w));
+      if (hits.length) scores[k] = hits.length;
+    });
+    // 3. 历史习惯加权
+    if (tags.history) {
+      const hist = {};
+      tags.history.forEach(h => {
+        if (!h.text || !h.tag) return;
+        if (h.text === text) hist[h.tag] = (hist[h.tag] || 0) + 2;
+        TAG_KEYWORDS[h.tag].forEach(w => { if (text.includes(w)) hist[h.tag] = (hist[h.tag] || 0) + 0.3; });
+      });
+      Object.keys(hist).forEach(k => { scores[k] = (scores[k] || 0) + hist[k]; });
+    }
+    const entries = Object.entries(scores).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) return { tag: '', confidence: 0, reason: '' };
+    const [tag, score] = entries[0];
+    const confidence = score >= 3 ? 90 : (score >= 1 ? 60 : 0);
+    return { tag, confidence, reason: confidence >= 90 ? '自动匹配' : '推荐' };
+  }
+
+  function tagOf(task) { return (task && task.tag) || ''; }
+
+  function tagStyle(tag) { return TAGS[tag] || { name: '无标签', color: 'transparent', icon: '' }; }
+
+  /** 记录用户本次标签选择 */
+  function recordTag(text, tag) {
+    if (!text || !tag) return;
+    const store = Store.load();
+    store.tags = store.tags || { prefs: {}, history: [], corrections: {} };
+    store.tags.history.unshift({ text, tag, date: Store.todayStr() });
+    store.tags.history = store.tags.history.slice(0, 200);
+    Store.save();
+  }
+
+  /** 记录用户修正 */
+  function recordTagCorrection(text, tag) {
+    if (!text || !tag) return;
+    const store = Store.load();
+    store.tags = store.tags || { prefs: {}, history: [], corrections: {} };
+    store.tags.corrections[text] = tag;
+    Store.save();
+  }
+
   /* ================= LLM 可用性控制 ================= */
   let _failAt = 0;
   function canCallLLM() {
@@ -322,7 +396,8 @@ const AI = (() => {
     '倒水', '接水', '烧水', '泡茶', '煮咖啡', '冲咖啡',
     '剪指甲', '敷面膜', '涂护手霜', '洗手', '洗脸',
     '收拾桌面', '整理桌面', '收拾书桌', '整理书桌', '整理床头柜', '整理抽屉', '整理杂物', '整理文件', '收纳',
-    '归档', '清理手机', '删照片', '备份', '理账单', '清空回收站', '折叠', '擦玻璃', '拖地'
+    '归档', '清理手机', '删照片', '备份', '理账单', '清空回收站', '折叠', '擦玻璃', '拖地',
+    '写日记', '记账', '看一篇文章', '清邮件', '写清单', '列计划'
   ];
 
   /**
@@ -681,6 +756,24 @@ c) drop：不值得记录
       c => `大任务最怕"全部想完"。拆到能一口吃掉的大小，就开始了。`
     ],
 
+    /* —— 标签相关 —— */
+    tag_auto: [ c => `已自动匹配标签「${c.tag}」。如果不合适，点一下就能改。` ],
+    tag_recommended: [ c => `推荐标签「${c.tag}」，点一下确认，或者直接选更合适的。` ],
+    tag_saved: [ c => `已保存为「${c.tag}」。下次遇到类似的，我会优先按这个来。` ],
+    tag_manual: [ c => `已标记为「${c.tag}」。你的分类，我听你的。` ],
+
+    /* —— 安排 / 拖拽 —— */
+    task_moved_to_date: [ c => `已安排到${c.date}。那天的事会按你的节奏来。` ],
+    drag_conflict_warn: [ c => `这天已有 ${c.count} 件任务，确定要增加吗？` ],
+    drag_conflict_block: [ () => '这天已满，建议安排到其他日期。' ],
+
+    /* —— 月视图汇总 —— */
+    month_summary_light: [ c => `本月共${c.total}件，节奏比较轻松。` ],
+    month_summary_medium: [ c => `本月共${c.total}件，节奏适中，继续保持。` ],
+    month_summary_heavy: [ c => `本月共${c.total}件，节奏偏紧，记得留时间给自己。` ],
+    month_busy_day: [ c => `${c.date}有${c.count}件，建议前一天晚上提前做好准备。` ],
+    month_free_days: [ c => `本月有${c.count}天空闲日，可以安排一些碎片任务。` ],
+
     /* —— 其他原有兜底 —— */
     adjust_estimate: [ c => `你最近${c.task}平均用时${c.avg}分钟，已按此调整后续预估。` ],
     only_one: [ () => '你今天选了最难的那件先做。另外几件没完成，是因为时间被其他事占用了，还是预估不准？明天我可以帮你把大任务拆小。' ],
@@ -762,7 +855,19 @@ c) drop：不值得记录
     task_to_backlog: '用户把今日任务移回待办',
     task_edited: '用户编辑保存了任务内容',
     task_deleted: '用户删除了一条任务（已二次确认）',
-    goal_kept: '目标已达100%，但用户选择暂不归档'
+    goal_kept: '目标已达100%，但用户选择暂不归档',
+    tag_auto: '系统自动为任务匹配了标签',
+    tag_recommended: '系统推荐了一个标签，等待用户确认',
+    tag_saved: '用户确认保存了标签',
+    tag_manual: '用户手动选择了一个标签',
+    task_moved_to_date: '用户把任务安排到了具体日期',
+    drag_conflict_warn: '拖拽任务到某天，任务数达到5件，提示确认',
+    drag_conflict_block: '拖拽任务到某天，任务数达到8件，阻止安排',
+    month_summary_light: '月视图汇总：本月总任务≤10件',
+    month_summary_medium: '月视图汇总：本月总任务11-25件',
+    month_summary_heavy: '月视图汇总：本月总任务≥26件',
+    month_busy_day: '月视图汇总：某天任务≥5件',
+    month_free_days: '月视图汇总：有≥3天完全空闲'
   };
 
   /**
@@ -933,11 +1038,78 @@ c) drop：不值得记录
     return null;
   }
 
+  /* ================= 时间轴：冲突检测 / 密度 / 任务量适配 ================= */
+
+  /** 统计某日已安排的任务数（今日 + dayTasks + 目标该日任务） */
+  function countTasksOnDate(date) {
+    const store = Store.load();
+    let n = 0;
+    if (date === Store.todayStr()) {
+      n += store.today.tasks.filter(t => !t.done).length;
+    } else if (store.dayTasks[date]) {
+      n += store.dayTasks[date].filter(t => !t.done).length;
+    }
+    store.goals.forEach(g => {
+      if (!g.archived) n += g.tasks.filter(t => t.date === date && !t.done).length;
+    });
+    return n;
+  }
+
+  /** 拖拽安排冲突检测 */
+  function dragConflict(date, addCount = 1) {
+    const n = countTasksOnDate(date) + addCount;
+    if (n >= 8) return { level: 'block', msg: '这天已满，建议安排到其他日期。', count: n };
+    if (n >= 5) return { level: 'warn', msg: `这天已有 ${n} 件任务，确定要增加吗？`, count: n };
+    return null;
+  }
+
+  /** 月视图任务密度映射 */
+  function monthDensity(n) {
+    if (!n) return { size: 0, color: '' };
+    if (n <= 2) return { size: 12, color: '#D4B8D9' };
+    if (n <= 4) return { size: 16, color: '#B8A0C8' };
+    return { size: 20, color: '#9A84AA' };
+  }
+
+  /** 自由日检查：每7天自动设1天自由日（取任务最少的那天） */
+  function freeDayCheck(date) {
+    const week = Store.weekDates(date);
+    const counts = week.map(d => ({ date: d, n: countTasksOnDate(d) }));
+    const min = Math.min(...counts.map(c => c.n));
+    const candidates = counts.filter(c => c.n === min);
+    return candidates[0].date;
+  }
+
+  /** 任务量智能适配：状态 + 自由日 + 连续完成 */
+  function adaptTaskCount(base, date) {
+    const store = Store.load();
+    let count = base;
+    if (store.today.status === '😊') count += 1;
+    else if (store.today.status === '😔') count = Math.max(1, count - 1);
+    if (freeDayCheck(date) === date) return 0;
+    const today = Store.todayStr();
+    let streakUp = 0, streakDown = 0;
+    for (let i = 1; i <= 7; i++) {
+      const d = Store.shiftDate(today, -i);
+      const rec = store.dayLog[d];
+      if (!rec) break;
+      if (rec.done >= rec.planned) streakUp++;
+      else streakUp = 0;
+      if (rec.planned > 0 && rec.done / rec.planned < 0.5) streakDown++;
+      else streakDown = 0;
+    }
+    if (streakUp >= 3) count += 1;
+    if (streakDown >= 3) count = Math.max(0, count - 1);
+    return Math.max(0, Math.min(5, count));
+  }
+
   return {
     goalDecompose, ocrSimulate, copy, copySmart,
     weeklyReport, weeklyNarration, monthlyReport, monthlyNarration,
     suggestTomorrow, tomorrowPlan, userContext,
     buildSlots, routeSuggest, routeSuggestRule, inboxSuggest, inboxSuggestSmart,
-    isFragTask, currentFreeSlot, countFragSlots, fragCandidates
+    isFragTask, currentFreeSlot, countFragSlots, fragCandidates,
+    TAGS, TAG_KEYWORDS, autoTag, tagOf, tagStyle, recordTag, recordTagCorrection,
+    countTasksOnDate, dragConflict, monthDensity, freeDayCheck, adaptTaskCount
   };
 })();

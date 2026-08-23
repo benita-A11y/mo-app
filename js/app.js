@@ -410,6 +410,12 @@ function renderToday() {
         <div class="p0-empty-txt">今天没有标记优先的事，挑一件最想先完成的就好。</div>`}
     </section>`;
 
+  // ⑥ ISFJ 舒适区：当天未完成任务超过 3 件时温和提醒（不催促，给选择权）
+  const COMFORT_MAX = 3;
+  const comfortTip = (isTodayView && undone.length > COMFORT_MAX)
+    ? `<div class="comfort-tip">今天有 ${undone.length} 件，超过舒服的 3 件啦。挑最顺手的先做，其余可以顺延到待办，没关系的。</div>`
+    : '';
+
   const pendingCount = undone.filter(t => !t.matched).length;
 
   // 「今日微调」入口：时间骨架启用且今天有固定安排时，低调出现在标题右侧
@@ -470,6 +476,16 @@ function renderToday() {
 
   const isTodayView = viewDate === Store.todayStr();
 
+  // 自由日：本周任务最少的一天自动成为自由日（每7天1天），当天不强制安排
+  let freeDayTip = '';
+  if (isTodayView) {
+    const freeDate = AI.freeDayCheck(Store.todayStr());
+    const isFree = freeDate === Store.todayStr();
+    if (isFree && undone.length <= 1) {
+      freeDayTip = `<div class="free-day-tip">🌿 今天没有安排，可以自由呼吸。补点进度，或者就好好休息，都行。</div>`;
+    }
+  }
+
   return `
     <div class="today-stack">
 
@@ -477,9 +493,13 @@ function renderToday() {
 
       ${dateNav}
 
+      ${freeDayTip}
+
       ${p0Card}
 
       ${overviewBar}
+
+      ${comfortTip}
 
       ${isTodayView && pendingCount ? `
         <div class="confirm-all">

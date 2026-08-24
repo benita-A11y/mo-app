@@ -2567,7 +2567,7 @@ function bindEvents() {
   });
 
   const input = $('#camera-input');
-  input.addEventListener('change', () => handlePhoto(input.files[0]));
+  if (input) input.addEventListener('change', () => handlePhoto(input.files[0]));
 
   // 灵感箱：回车快速捕捉（事件委托，避免重复绑定）
   document.addEventListener('keydown', e => {

@@ -284,6 +284,10 @@ let _dragPoolFrom = '';     // 来源：backlog / today / day
 let _dragTlId = null;       // 时间轴任务卡片拖拽中的 id
 let _dragTlDate = '';       // 时间轴任务卡片所在日期
 let _dragTlFrom = '';       // 来源：day
+let _dragBoxId = null;      // 今天视图：收集箱/分类任务拖拽中的 id
+let _dragBoxFrom = '';      // 来源：inbox / backlog / today / day
+let _dragBoxDate = '';      // 来源日期（day 来源时）
+let _dragBoxTag = '';       // 来源标签
 function moveTask(fromId, toId) {
   const store = Store.load();
   const arr = store.today.tasks;
@@ -793,59 +797,139 @@ function renderTimeline() {
   return `<div class="timeline-page" data-view="${view}">${header}${body}</div>`;
 }
 
-/* 今天视图主体：时段分组时间线 + 今日重点 + 今日总结 */
+/* 今天视图主体：可展开/收起月历 + 每日重点/总结 + 标签分类 + 收集箱 */
 function renderTodayBody(store, base) {
-  const d = base;
+  const d = App.todayViewDate || base;
   const isT = d === Store.todayStr();
-  const list = dayTaskList(d);
-  const SLOTS = [
-    { key: 'am', label: '上午', time: '00:00-12:00' },
-    { key: 'noon', label: '中午', time: '12:00-14:00' },
-    { key: 'pm', label: '下午', time: '14:00-18:00' },
-    { key: 'night', label: '晚上', time: '18:00-24:00' }
-  ];
-  const slotOf = t => {
-    if (t.slot === 'am' || t.slot === 'early') return 'am';
-    if (t.slot === 'noon') return 'noon';
-    if (t.slot === 'pm' || t.slot === 'after') return 'pm';
-    if (t.slot === 'night' || t.slot === 'evening' || t.slot === 'sleep' || t.slot === 'late') return 'night';
-    // 没有 slot 时按时间估算
-    const m = (t.timeStart || '').slice(0, 2) | 0;
-    if (m >= 12 && m < 14) return 'noon';
-    if (m >= 14 && m < 18) return 'pm';
-    if (m >= 18) return 'night';
-    return 'am';
-  };
+  const open = !!App.todayCalOpen;
 
-  const timelineHtml = SLOTS.map(s => {
-    const items = list.filter(t => slotOf(t) === s.key);
-    const body = items.length
-      ? items.map(t => timelineTaskItem(t, d)).join('')
-      : `<div class="slot-empty">（空闲）</div>`;
+  /* ---------- 月历 ---------- */
+  const pm = Store.parseYMD(d);
+  const monthTitle = `${pm.m}月`;
+  const calOpen = open ? '▲' : '▼';
+
+  // 构建日期格
+  function miniCell(ymd) {
+    if (!ymd) return `<div class="mini-cell empty"></div>`;
+    const has = scheduledCount(ymd) > 0;
+    const isCur = ymd === Store.todayStr();
+    const isSel = ymd === d;
+    return `<div class="mini-cell${isCur ? ' cur' : ''}${isSel ? ' sel' : ''}${has ? ' has' : ''}" data-action="cal:date" data-date="${ymd}">
+      <span class="mc-num">${Number(ymd.split('-')[2])}</span>
+      ${has ? '<span class="mc-dot"></span>' : ''}
+    </div>`;
+  }
+
+  let calBody;
+  if (open) {
+    // 整月：7列×6行
+    const yr = pm.y, mo = pm.m;
+    const firstDow = (new Date(yr, mo - 1, 1).getDay() + 6) % 7; // 周一=0
+    const dim = Store.monthDays(yr, mo);
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(null);
+    for (let dd = 1; dd <= dim; dd++) cells.push(`${yr}-${String(mo).padStart(2, '0')}-${String(dd).padStart(2, '0')}`);
+    while (cells.length % 7 !== 0) cells.push(null);
+    const rows = [];
+    for (let r = 0; r < cells.length / 7; r++) {
+      rows.push('<div class="mini-row">' + cells.slice(r * 7, r * 7 + 7).map(miniCell).join('') + '</div>');
+    }
+    calBody = `<div class="mini-grid">${rows.join('')}</div>`;
+  } else {
+    // 当前周7天
+    const wk = Store.weekDates(d);
+    calBody = `<div class="mini-row">${wk.map(miniCell).join('')}</div>`;
+  }
+
+  const cal = `
+    <div class="mini-cal">
+      <button class="mini-month" data-action="cal:toggle">${monthTitle} ${calOpen}</button>
+      <div class="mini-weekdays"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+      ${calBody}
+    </div>`;
+
+  /* ---------- 每日重点 + 每日总结（并排） ---------- */
+  const hi = (store.dayHighlights && store.dayHighlights[d]) || [];
+  const focusRow = `
+    <div class="today-focus-row">
+      <div class="today-focus-card">
+        <div class="tfc-title">📌 每日重点</div>
+        <div class="hl-dropzone ${hi.length ? 'has' : ''}" data-action="today:highlight" data-date="${d}">
+          ${hi.length
+            ? hi.map(h => `<div class="hl-chip" data-action="today:unhighlight" data-date="${d}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
+            : '<span class="hl-tip">将任务拖到这里即可关联</span>'}
+        </div>
+      </div>
+      <div class="today-focus-card">
+        <div class="tfc-title">✏️ 每日总结</div>
+        <textarea class="tf-input" id="today-summary-input" placeholder="今天过得怎么样？写一句话吧…" data-action="today:summary" data-date="${d}">${esc((store.todaySummary && store.todaySummary[d]) || '')}</textarea>
+      </div>
+    </div>`;
+
+  /* ---------- 标签分类（6色） ---------- */
+  const TAGS = AI.TAGS;
+  // 收集所有任务并按标签分组（含已安排与未安排，排除已完成度不显示的也显示）
+  const allTasks = [];
+  store.backlog.forEach(t => allTasks.push({ t, from: 'backlog', date: t.date || '' }));
+  if (store.today && Array.isArray(store.today.tasks)) store.today.tasks.forEach(t => allTasks.push({ t, from: 'today', date: d }));
+  if (store.dayTasks) Object.keys(store.dayTasks).forEach(dt => store.dayTasks[dt].forEach(t => allTasks.push({ t, from: 'day', date: dt })));
+  const byTag = {};
+  Object.keys(TAGS).forEach(k => byTag[k] = []);
+  allTasks.forEach(o => { if (o.t.tag && byTag[o.t.tag]) byTag[o.t.tag].push(o); });
+
+  const catBlocks = Object.keys(TAGS).map(k => {
+    const items = byTag[k];
+    const dot = `<span class="tag-dot ${k}"></span>`;
+    const listHtml = items.length
+      ? items.map(o => `
+        <div class="cat-item ${o.t.done ? 'done' : ''}" draggable="true" data-action="cat:task" data-id="${o.t.id}" data-from="${o.from}" data-date="${o.date}" data-tag="${k}">
+          <span class="ci-check">${o.t.done ? '✓' : ''}</span>
+          <span class="ci-text">${esc(o.t.text)}</span>
+        </div>`).join('')
+      : '<div class="cat-empty">—</div>';
     return `
-      <div class="tl-slot">
-        <div class="slot-head">${s.label}</div>
-        <div class="slot-list">${body}</div>
+      <div class="cat-block" data-tag="${k}">
+        <div class="cat-head" data-action="cat:tag" data-tag="${k}">${dot}<span>${TAGS[k].name}</span><em>${items.length}</em></div>
+        <div class="cat-list">${listHtml}</div>
       </div>`;
   }).join('');
 
-  // 今日重点：拖拽任务到此设为核心目标
-  const hi = (store.dayHighlights && store.dayHighlights[d]) || [];
-  const focusHtml = `
-    <div class="focus-card">
-      <div class="fc-title">📌 今日重点</div>
-      <div class="hl-dropzone ${hi.length ? 'has' : ''}" data-action="today:highlight" data-date="${d}">
-        ${hi.length
-          ? hi.map(h => `<div class="hl-chip" data-action="today:unhighlight" data-date="${d}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
-          : '<span class="hl-tip">可拖拽任务到此设为重点</span>'}
+  /* ---------- 收集箱 ---------- */
+  // 未分类未安排：backlog 中无 date 的 + inbox（灵感箱）
+  const boxTasks = [];
+  store.backlog.forEach(t => { if (!t.date) boxTasks.push({ t, from: 'backlog' }); });
+  (store.inbox || []).forEach(it => boxTasks.push({ t: { id: it.id, text: it.text, done: false, _inbox: true }, from: 'inbox' }));
+  // 按录入时间排序（inbox 用 at，backlog 无 date 用 originalDate 兜底 0）
+  boxTasks.sort((a, b) => {
+    const ta = a.from === 'inbox' ? (a.t.at || 0) : (a.t.originalDate || '');
+    const tb = b.from === 'inbox' ? (b.t.at || 0) : (b.t.originalDate || '');
+    return String(tb).localeCompare(String(ta));
+  });
+  const boxHtml = boxTasks.length
+    ? boxTasks.map(o => `
+      <div class="box-item" draggable="true" data-action="box:task" data-id="${o.t.id}" data-from="${o.from}">
+        <span class="ci-check"></span>
+        <span class="ci-text">${esc(o.t.text)}</span>
+      </div>`).join('')
+    : '<div class="cat-empty">收集箱是空的，去「待办」页记点想法吧 ✨</div>';
+
+  const cols = `
+    <div class="today-cols">
+      <div class="today-cat">
+        <div class="col-title">标签分类</div>
+        <div class="cat-blocks">${catBlocks}</div>
       </div>
-      <textarea class="fc-input" id="today-summary-input" placeholder="今天过得怎么样？写一句话吧…" data-action="today:summary" data-date="${d}">${esc((store.todaySummary && store.todaySummary[d]) || '')}</textarea>
+      <div class="today-box">
+        <div class="col-title">📦 收集箱 <em>${boxTasks.length}</em></div>
+        <div class="box-dropzone" data-action="box:drop">${boxHtml}</div>
+      </div>
     </div>`;
 
   return `
     <div class="today-mode">
-      <div class="tl-timeline">${timelineHtml}</div>
-      ${focusHtml}
+      ${cal}
+      ${focusRow}
+      ${cols}
     </div>`;
 }
 
@@ -1263,7 +1347,46 @@ function pickTaskObject(id, from, date) {
     const t = g.tasks.find(x => x.id === id);
     if (t) return { id, text: t.text, from: 'goal' };
   }
+  // 灵感箱来源
+  const inbox = (store.inbox || []).find(x => x.id === id);
+  if (inbox) return { id, text: inbox.text, from: 'inbox' };
   return null;
+}
+
+/** 给任务更换标签（分类区拖到另一个标签头） */
+function setTaskTag(id, from, date, newTag) {
+  const store = Store.load();
+  const arr = from === 'today' ? store.today.tasks
+    : from === 'day' ? (store.dayTasks && store.dayTasks[date]) || []
+    : store.backlog;
+  const t = (arr || []).find(x => x.id === id);
+  if (!t) return;
+  if (newTag === 'none') { t.tag = ''; }
+  else t.tag = newTag;
+  Store.save();
+  render();
+}
+
+/** 把任务移回收集箱（取消分类 / 取消安排），成为未分类未安排状态 */
+function moveToInbox(id, from, date) {
+  const store = Store.load();
+  let taskObj = null;
+  const rm = (arr, k) => { const i = (arr || []).findIndex(x => x.id === id); if (i >= 0) { taskObj = arr[i]; arr.splice(i, 1); } };
+  if (from === 'today') rm(store.today.tasks);
+  else if (from === 'day') { if (store.dayTasks && store.dayTasks[date]) rm(store.dayTasks[date]); }
+  else rm(store.backlog);
+  if (!taskObj) return;
+  // 进入收集箱：加入 backlog 并清除 date（inbox 灵感箱项则删除 inbox 记录）
+  if (from === 'inbox') {
+    store.inbox = (store.inbox || []).filter(x => x.id !== id);
+  } else {
+    taskObj.date = '';
+    taskObj.tag = taskObj.tag || '';
+    store.backlog = store.backlog || [];
+    store.backlog.unshift(taskObj);
+  }
+  Store.save();
+  render();
 }
 
 function openDayTaskMenu(date, id) {
@@ -2430,20 +2553,49 @@ function bindEvents() {
       _dragPoolFrom = pool.dataset.from;
       pool.classList.add('dragging');
       if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', pool.dataset.id); }
+      return;
+    }
+    // 今天视图：收集箱任务 / 分类任务（可拖到日期/标签/重点/收集箱）
+    const box = e.target.closest('.box-item');
+    if (box) {
+      _dragBoxId = box.dataset.id;
+      _dragBoxFrom = box.dataset.from;
+      box.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', box.dataset.id); }
+      return;
+    }
+    const cat = e.target.closest('.cat-item');
+    if (cat && !cat.classList.contains('done')) {
+      _dragBoxId = cat.dataset.id;
+      _dragBoxFrom = cat.dataset.from;
+      _dragBoxDate = cat.dataset.date || '';
+      _dragBoxTag = cat.dataset.tag || '';
+      cat.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', cat.dataset.id); }
     }
   });
   document.addEventListener('dragover', e => {
     const li = e.target.closest('.task');
     if (li && _dragId && li.dataset.id !== _dragId) { e.preventDefault(); return; }
-    const dt = e.target.closest('.day-col') || e.target.closest('.month-cell');
-    if (dt && (_dragPoolId || _dragTlId) && dt.dataset.date) {
+    const dt = e.target.closest('.day-col') || e.target.closest('.month-cell') || e.target.closest('.mini-cell');
+    if (dt && (_dragPoolId || _dragTlId || _dragBoxId) && dt.dataset.date) {
       e.preventDefault();
       dt.classList.add('drop-hot');
     }
     const dz = e.target.closest('.hl-dropzone');
-    if (dz && (_dragPoolId || _dragTlId)) {
+    if (dz && (_dragPoolId || _dragTlId || _dragBoxId)) {
       e.preventDefault();
       dz.classList.add('drop-hot');
+    }
+    const ch = e.target.closest('.cat-head');
+    if (ch && _dragBoxId && (_dragBoxTag !== ch.dataset.tag)) {
+      e.preventDefault();
+      ch.classList.add('drop-hot');
+    }
+    const bx = e.target.closest('.box-dropzone');
+    if (bx && _dragBoxId) {
+      e.preventDefault();
+      bx.classList.add('drop-hot');
     }
   });
   document.addEventListener('drop', e => {
@@ -2457,10 +2609,10 @@ function bindEvents() {
     }
     // 重点区：设为今日/本周/本月重点
     const dz = e.target.closest('.hl-dropzone');
-    if (dz && (_dragPoolId || _dragTlId)) {
+    if (dz && (_dragPoolId || _dragTlId || _dragBoxId)) {
       e.preventDefault();
-      const id = _dragTlId || _dragPoolId;
-      const from = _dragTlId ? _dragTlFrom : _dragPoolFrom;
+      const id = _dragTlId || _dragPoolId || _dragBoxId;
+      const from = _dragTlId ? _dragTlFrom : (_dragPoolId ? _dragPoolFrom : _dragBoxFrom);
       const date = _dragTlId ? _dragTlDate : '';
       const obj = pickTaskObject(id, from, date);
       dz.classList.remove('drop-hot');
@@ -2468,23 +2620,62 @@ function bindEvents() {
       else if (dz.dataset.action === 'week:highlight') addWeekHighlight(dz.dataset.week, obj);
       else if (dz.dataset.action === 'month:highlight') addMonthHighlight(dz.dataset.month, obj);
       _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = '';
+      _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = '';
+      return;
+    }
+    // 换标签（分类区拖到另一个标签头）
+    const ch = e.target.closest('.cat-head');
+    if (ch && _dragBoxId) {
+      e.preventDefault();
+      ch.classList.remove('drop-hot');
+      const newTag = ch.dataset.tag;
+      setTaskTag(_dragBoxId, _dragBoxFrom, _dragBoxDate, newTag);
+      toast(`已归入${AI.TAGS[newTag] ? AI.TAGS[newTag].name : '未分类'}`);
+      _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = '';
+      return;
+    }
+    // 移回收集箱（取消分类/安排）
+    const bx = e.target.closest('.box-dropzone');
+    if (bx && _dragBoxId) {
+      e.preventDefault();
+      bx.classList.remove('drop-hot');
+      moveToInbox(_dragBoxId, _dragBoxFrom, _dragBoxDate);
+      toast('已移至收集箱');
+      _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = '';
       return;
     }
     // 日期安排
-    const target = e.target.closest('.day-col') || e.target.closest('.month-cell');
-    if (target && (_dragPoolId || _dragTlId) && target.dataset.date) {
+    const target = e.target.closest('.day-col') || e.target.closest('.month-cell') || e.target.closest('.mini-cell');
+    if (target && (_dragPoolId || _dragTlId || _dragBoxId) && target.dataset.date) {
       e.preventDefault();
       const date = target.dataset.date;
-      const id = _dragTlId || _dragPoolId;
-      const from = _dragTlId ? _dragTlFrom : _dragPoolFrom;
-      document.querySelectorAll('.day-col.drop-hot, .month-cell.drop-hot').forEach(c => c.classList.remove('drop-hot'));
+      const id = _dragTlId || _dragPoolId || _dragBoxId;
+      const from = _dragTlId ? _dragTlFrom : (_dragPoolId ? _dragPoolFrom : _dragBoxFrom);
+      const isBox = !!_dragBoxId;
+      document.querySelectorAll('.day-col.drop-hot, .month-cell.drop-hot, .mini-cell.drop-hot').forEach(c => c.classList.remove('drop-hot'));
       const c = AI.dragConflict(date, 1);
-      if (c && c.level === 'block') { toast('这天已经排满了，换一天吧。', { ai: true }); _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = ''; return; }
+      if (c && c.level === 'block') { toast('这天已经排满了，换一天吧。', { ai: true }); _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = ''; _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = ''; return; }
       App.timelineSelectedDate = date;
-      moveTaskToDate(id, date, from);
+      App.todayViewDate = date;
+      if (isBox && from === 'inbox') {
+        // 灵感箱项直接安排到该日：转为正式任务
+        const store = Store.load();
+        const inboxItem = (store.inbox || []).find(x => x.id === id);
+        if (inboxItem) {
+          store.inbox = (store.inbox || []).filter(x => x.id !== id);
+          store.dayTasks = store.dayTasks || {};
+          store.dayTasks[date] = store.dayTasks[date] || [];
+          store.dayTasks[date].push({ id: inboxItem.id, text: inboxItem.text, estMin: 15, tag: '', done: false, why: '' });
+          Store.save();
+        }
+      } else {
+        moveTaskToDate(id, date, from);
+      }
       if (c && c.level === 'warn') toast('这天任务有点多，记得留点空隙。', { ai: true });
       else aiToast('task_moved_to_date', { task: '', date: Store.fmtMD(date) });
       _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = '';
+      _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = '';
+      return;
     }
   });
   document.addEventListener('dragend', e => {
@@ -2494,8 +2685,13 @@ function bindEvents() {
     if (pool) pool.classList.remove('dragging');
     const tl = e.target.closest('.tl-task');
     if (tl) tl.classList.remove('dragging');
-    document.querySelectorAll('.day-col.drop-hot, .month-cell.drop-hot, .hl-dropzone.drop-hot').forEach(c => c.classList.remove('drop-hot'));
+    const box = e.target.closest('.box-item');
+    if (box) box.classList.remove('dragging');
+    const cat = e.target.closest('.cat-item');
+    if (cat) cat.classList.remove('dragging');
+    document.querySelectorAll('.day-col.drop-hot, .month-cell.drop-hot, .mini-cell.drop-hot, .hl-dropzone.drop-hot, .cat-head.drop-hot, .box-dropzone.drop-hot').forEach(c => c.classList.remove('drop-hot'));
     _dragId = null; _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = '';
+    _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = '';
   });
 
   // 深色模式跟随系统
@@ -2576,13 +2772,24 @@ function onTouchEnd(e) {
     const dy = e.changedTouches[0].clientY - touchStartY;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       const dir = dx < 0 ? 1 : -1;
-      const base = App.timelineDate || Store.todayStr();
-      if (App.timelineView === 'month') {
-        const d = new Date(base + 'T00:00:00');
-        d.setMonth(d.getMonth() + dir);
-        App.timelineDate = Store.toYMD(d);
+      if (App.timelineView === 'today') {
+        const base = App.todayViewDate || Store.todayStr();
+        if (App.todayCalOpen) {
+          const d = new Date(base + 'T00:00:00');
+          d.setMonth(d.getMonth() + dir);
+          App.todayViewDate = Store.toYMD(d);
+        } else {
+          App.todayViewDate = Store.shiftDate(Store.startOfWeek(base), dir * 7);
+        }
       } else {
-        App.timelineDate = Store.shiftDate(Store.startOfWeek(base), dir * 7);
+        const base = App.timelineDate || Store.todayStr();
+        if (App.timelineView === 'month') {
+          const d = new Date(base + 'T00:00:00');
+          d.setMonth(d.getMonth() + dir);
+          App.timelineDate = Store.toYMD(d);
+        } else {
+          App.timelineDate = Store.shiftDate(Store.startOfWeek(base), dir * 7);
+        }
       }
       render();
     }
@@ -2699,6 +2906,34 @@ function onClick(e) {
       break;
     }
     case 'timeline:view': App.timelineView = btn.dataset.view || 'week'; render(); break;
+    case 'cal:toggle': App.todayCalOpen = !App.todayCalOpen; render(); break;
+    case 'cal:date': {
+      App.todayViewDate = btn.dataset.date || Store.todayStr();
+      App.todayCalOpen = false;
+      render();
+      break;
+    }
+    case 'cat:task': {
+      const id = btn.dataset.id, from = btn.dataset.from, date = btn.dataset.date || '';
+      openTaskDetail(id, from === 'today' ? 'today' : (from === 'day' ? 'day:' + date : 'backlog'));
+      break;
+    }
+    case 'box:task': {
+      const id = btn.dataset.id, from = btn.dataset.from;
+      if (from === 'inbox') {
+        const store = Store.load();
+        const it = (store.inbox || []).find(x => x.id === id);
+        if (it) toast('灵感箱里的想法：' + it.text + '（拖到标签或日期即可安放）');
+      } else {
+        openTaskDetail(id, 'backlog');
+      }
+      break;
+    }
+    case 'cat:tag': {
+      // 移动端无拖拽时的备选：点击标签头提示可拖拽
+      toast('长按任务拖到这里即可归入「' + (AI.TAGS[btn.dataset.tag] || {}).name + '」');
+      break;
+    }
     case 'timeline:menu': aiToast('hello'); break;
     case 'timeline:gift': toast('礼物中心筹备中 🎁', { ai: true }); break;
     case 'timeline:search': toast('全局搜索即将上线 🔍', { ai: true }); break;

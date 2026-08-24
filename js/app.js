@@ -2150,6 +2150,8 @@ function schedLeftNav() {
   const all = schedAll();
   const today = Store.todayStr();
   const sc = schedScope();
+  // 收集箱 = 待办池里还没安排到具体日期的想法（灵感即待办）
+  const inbox = (store.backlog || []).filter(b => !b.dueDate);
   const cats = Object.keys(AI.TAGS).map(k => ({ key: k, ...AI.TAGS[k], n: all.filter(t => t.category === k && !t.isCompleted).length }));
   const custom = (S().customCats || []).map(c => ({ ...c, n: all.filter(t => t.category === c.key && !t.isCompleted).length }));
 
@@ -2248,6 +2250,7 @@ function renderSchedDay() {
   const calHtml = App.schedCalOpen ? schedMiniCal() : '';
 
   // 按标签分组（参考图风格）
+  const cats = Object.keys(AI.TAGS).map(k => ({ key: k, ...AI.TAGS[k] }));
   const custom = (S().customCats || []).map(c => ({ ...c }));
   const allCats = [...cats, ...custom];
   const grouped = allCats.map(cat => {

@@ -1329,6 +1329,7 @@ html[data-theme="dark"] .today-focus-card .tf-input{background:rgba(255,255,255,
 .col-title{font-size:14px;font-weight:700;color:#4A3F5C;margin-bottom:8px;display:flex;align-items:center;gap:6px}
 html[data-theme="dark"] .col-title{color:#D4B8D9}
 .col-title em{font-style:normal;font-size:12px;color:var(--ink-2);background:rgba(0,0,0,.04);border-radius:10px;padding:1px 8px}
+.col-sub{font-size:11px;font-weight:400;color:var(--ink-2);opacity:.8}
 .cat-blocks{display:flex;flex-direction:column;gap:8px}
 .cat-block{
   background:rgba(255,255,255,.45);border:.5px solid var(--line);
@@ -1337,12 +1338,17 @@ html[data-theme="dark"] .col-title{color:#D4B8D9}
 html[data-theme="dark"] .cat-block{background:rgba(255,255,255,.05)}
 .cat-head{
   display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700;color:#4A3F5C;
-  padding:4px 6px;border-radius:8px;cursor:default;transition:all .15s var(--ease);
+  padding:4px 6px;border-radius:8px;cursor:pointer;transition:all .15s var(--ease);
 }
+.cat-head:hover{background:rgba(212,184,217,.12)}
 html[data-theme="dark"] .cat-head{color:#E6DCEF}
 .cat-head em{margin-left:auto;font-style:normal;font-size:11px;color:var(--ink-2);font-weight:400}
+.cat-fold{font-size:10px;color:var(--ink-2);flex:none;width:14px;text-align:center}
 .cat-head.drop-hot{background:rgba(212,184,217,.25);outline:2px solid var(--accent);outline-offset:-2px}
 .cat-list{display:flex;flex-direction:column;gap:3px;margin-top:5px}
+/* 已归类但未安排的温和提示行 */
+.cat-unsched{font-size:11px;color:var(--accent);background:rgba(212,184,217,.12);
+  border-radius:8px;padding:5px 8px;margin-bottom:3px}
 .cat-item,.box-item{
   display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;
   font-size:14px;color:#1C1C1E;background:rgba(255,255,255,.6);cursor:pointer;
@@ -1353,6 +1359,10 @@ html[data-theme="dark"] .cat-item,html[data-theme="dark"] .box-item{color:#E8E4E
 .cat-item.dragging,.box-item.dragging{transform:scale(1.03);box-shadow:0 6px 18px rgba(74,63,92,.22);opacity:.85}
 .cat-item.done,.box-item.done{opacity:.5}
 .cat-item.done .ci-text,.box-item.done .ci-text{text-decoration:line-through}
+/* 分类项：已安排日期的徽标，证明它已进入时间轴闭环 */
+.ci-date{font-size:10px;color:var(--ink-2);background:rgba(0,0,0,.04);
+  border-radius:8px;padding:1px 6px;flex:none}
+.cat-item .ci-date{color:var(--accent)}
 .ci-check{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--ink-2);flex:none;
   display:grid;place-items:center;font-size:11px;color:#fff}
 .cat-item.done .ci-check{background:#2ED573;border-color:#2ED573}
@@ -1365,6 +1375,10 @@ html[data-theme="dark"] .cat-item,html[data-theme="dark"] .box-item{color:#E8E4E
   border:1.5px dashed transparent;border-radius:var(--radius-md);padding:2px;
 }
 .box-dropzone.drop-hot{border-color:var(--accent);background:rgba(212,184,217,.15)}
+
+/* 今天视图底部·欠安排温和提醒 */
+.today-tip{font-size:12px;color:var(--ink-2);background:rgba(212,184,217,.1);
+  border-radius:10px;padding:8px 12px;line-height:1.5}
 
 
 /* 周视图（修正版） */

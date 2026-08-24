@@ -45,6 +45,37 @@ const Store = (() => {
     return '';
   }
 
+  /* ---------- 日程 Tab 主任务列表（统一调度池） ---------- */
+  function seedScheduleFrom(store) {
+    const today = Store.todayStr();
+    const out = [];
+    const push = o => out.push(Object.assign({
+      note: '', category: '', fragmentType: '', priority: '中',
+      dueDate: '', startTime: '', endTime: '',
+      isCompleted: false, completedAt: '', isWeekGoal: false, weekGoalOrder: 0,
+      estMin: 15, aiSuggestion: '', source: 'manual', createdAt: today, order: out.length
+    }, o));
+    (store.backlog || []).forEach(b => push({
+      id: b.id, title: b.text, estMin: b.estMin || 15, category: b.tag || '',
+      priority: b.priority ? '高' : '中', dueDate: ''
+    }));
+    (store.today && store.today.tasks ? store.today.tasks : []).forEach(t => push({
+      id: t.id, title: t.text, estMin: t.estMin || 15, category: t.tag || '',
+      priority: t.priority ? '高' : '中', dueDate: today,
+      isCompleted: !!t.done, completedAt: t.done ? today : ''
+    }));
+    Object.keys(store.dayTasks || {}).forEach(d => (store.dayTasks[d] || []).forEach(t => push({
+      id: t.id, title: t.text, estMin: t.estMin || 15, category: t.tag || '',
+      priority: '中', dueDate: d
+    })));
+    (store.goals || []).forEach(g => (g.tasks || []).forEach(t => push({
+      id: t.id, title: t.text, estMin: t.estMin || 15, category: t.tag || '',
+      priority: '中', dueDate: t.date || '', isCompleted: !!t.done, completedAt: t.done ? t.date : '',
+      source: 'goal', goalId: g.id
+    })));
+    return out;
+  }
+
   /* ---------- 种子数据 ---------- */
   function seed() {
     const today = todayStr();
@@ -163,6 +194,7 @@ const Store = (() => {
       monthNotes: {},  // { '2026-08': { focus:'', summary:'', items:[] } } 本月重点项
       timelineView: 'week' // 时间轴默认视图：today / week / month
     };
+    result.schedule = { tasks: seedScheduleFrom(result), weekGoals: {} };
     // 给种子数据自动打标签
     result.today.tasks.forEach(t => { t.tag = seedTag(t.text); });
     result.backlog.forEach(t => { t.tag = seedTag(t.text); });
@@ -246,6 +278,37 @@ const Store = (() => {
           if (Array.isArray(g.tasks)) g.tasks.forEach(t => { if (t.tag === undefined) t.tag = ''; });
         });
       }
+    }
+    // v7: 新增「日程」Tab 统一调度池（从既有任务快照生成，避免割裂）
+    if ((data.version || 0) < 7) {
+      data.version = 7;
+      if (!data.schedule || !Array.isArray(data.schedule.tasks)) {
+        data.schedule = { tasks: seedScheduleFrom(data), weekGoals: {} };
+      }
+      if (!data.schedule.weekGoals) data.schedule.weekGoals = {};
+      data.schedule.tasks.forEach(t => {
+        t.note = t.note || '';
+        t.category = t.category || '';
+        t.fragmentType = t.fragmentType || '';
+        t.priority = t.priority || '中';
+        t.dueDate = t.dueDate || '';
+        t.startTime = t.startTime || '';
+        t.endTime = t.endTime || '';
+        t.isCompleted = !!t.isCompleted;
+        t.completedAt = t.completedAt || '';
+        t.isWeekGoal = !!t.isWeekGoal;
+        t.weekGoalOrder = t.weekGoalOrder || 0;
+        t.estMin = t.estMin || 0;
+        t.aiSuggestion = t.aiSuggestion || '';
+        t.source = t.source || 'manual';
+        t.createdAt = t.createdAt || '';
+        t.order = t.order || 0;
+        // AI 自动识别属性标签（碎片/顺路/大块时间/依赖天气）
+        if (!t.fragmentType && typeof AI !== 'undefined') {
+          const f = AI.classifyFragment(t.title, t.estMin);
+          if (f) { t.fragmentType = f; t.aiSuggestion = AI.fragmentSuggestion(t); }
+        }
+      });
     }
   }
   function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {} }

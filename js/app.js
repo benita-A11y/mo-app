@@ -19,7 +19,10 @@ const App = {
   timelineView: 'week',       // 时间轴：today / week / month
   timelineDate: Store ? Store.todayStr() : '',
   todayViewDate: Store ? Store.todayStr() : '', // 今日页当前查看日期
-  timelineSelectedDate: '',   // 时间轴中选中的日期（展开任务列表）
+  timelineSelectedDate: '',   // 时间轴（月视图）中选中的日期（展开任务列表）
+  timelineWeekSelectedDate: '', // 周视图中展开的日期
+  timelineWeekSelect: false,  // 周选择器是否展开
+  timelineMonthSelect: false, // 月（年/月）选择器是否展开
   timelineFocusTab: 'focus',  // 重点/总结：focus | summary
   ocrDraft: null,
   pendingGoal: null,
@@ -781,7 +784,7 @@ function renderTimeline() {
         <button class="tl-view ${view === 'week' ? 'on' : ''}" data-action="timeline:view" data-view="week">📆 本周</button>
         <button class="tl-view ${view === 'month' ? 'on' : ''}" data-action="timeline:view" data-view="month">🗓️ 本月</button>
       </div>
-      ${view === 'week' || view === 'month'
+      ${view === 'month'
         ? `<div class="tl-nav">
              <button class="tl-tool" data-action="timeline:page" data-dir="-1">‹</button>
              <button class="tl-tool" data-action="timeline:page" data-dir="1">›</button>
@@ -933,14 +936,47 @@ function renderTodayBody(store, base) {
     </div>`;
 }
 
-/* 周视图主体 */
+/* 周选择器：展开月历网格，按周分行，点击某周行切换 */
+function weekSelectorHtml(store, base) {
+  const wk = Store.weekKey(base);
+  const wn = Store.weekNumber(base);
+  const d0 = new Date(base + 'T00:00:00');
+  const yr = d0.getFullYear(), mo = d0.getMonth();
+  const firstDow = (new Date(yr, mo, 1).getDay() + 6) % 7;
+  const dim = Store.monthDays(yr, mo + 1);
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= dim; d++) cells.push(`${yr}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const open = !!App.timelineWeekSelect;
+  const rows = [];
+  for (let r = 0; r < cells.length / 7; r++) {
+    const row = cells.slice(r * 7, r * 7 + 7);
+    const monday = row.find(Boolean);
+    if (!monday) { rows.push(`<div class="wk-row empty"></div>`); continue; }
+    const rk = Store.weekKey(monday);
+    const isCur = rk === wk;
+    const nums = row.map(d => d ? `<span class="${d === Store.todayStr() ? 'md-today' : ''}">${Number(d.split('-')[2])}</span>` : '<span class="md-blank"></span>').join('');
+    rows.push(`<div class="wk-row${isCur ? ' cur' : ''}" data-action="week:select" data-week="${rk}" data-base="${monday}">
+      <span class="wk-num">W${Store.weekNumber(monday)}</span>${nums}</div>`);
+  }
+  return `
+    <div class="week-selector">
+      <button class="wk-toggle" data-action="cal:week">W${wn}，本周 ${open ? '▲' : '▼'}</button>
+      ${open ? `<div class="wk-grid"><div class="wk-weekdays"><span></span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>${rows.join('')}</div>` : ''}
+    </div>`;
+}
+
+/* 周视图主体（修正版）：顶部周选择器 + 左本周重点/总结 + 右7天横向 + 点击展开日任务 */
 function renderWeekBody(store, base) {
   const days = Store.weekDates(base);
   const wk = Store.weekKey(base);
   const wn = store.weekNotes[wk] || { focus: '', summary: '', items: [] };
   if (!wn.items) wn.items = [];
 
-  // 本周重点：独立顶部区域，可拖拽任务设为本周重点
+  const sel = App.timelineWeekSelectedDate || null;
+
+  // 左侧：本周重点（可拖拽设重点）
   const focusCard = `
     <div class="focus-card week-focus">
       <div class="fc-title">📌 本周重点</div>
@@ -951,52 +987,77 @@ function renderWeekBody(store, base) {
       </div>
     </div>`;
 
-  const cards = days.map(d => {
-    const list = dayTaskList(d);
-    const isT = d === Store.todayStr();
-    const done = list.filter(t => t.done).length;
-    const color = dowColorClass(d);
-    const count = list.length ? `${done}/${list.length}` : '0';
-
-    const head = `
-      <div class="dc-head ${color}">
-        <span class="dc-dow">${Store.fmtDOW(d)}</span>
-        <span class="dc-date">${Store.fmtMD(d)}</span>
-        <button class="dc-add" data-action="day:add" data-date="${d}">+</button>
-      </div>`;
-
-    const body = `
-      <div class="dc-body${isT ? ' today' : ''}" data-date="${d}">
-        ${list.length ? list.map(t => timelineTaskItem(t, d)).join('') : `<div class="dc-empty" data-action="day:add" data-date="${d}">点击 + 添加</div>`}
-        <button class="dc-goto" data-action="today:date" data-date="${d}">${isT ? '进入今天' : '查看'}</button>
-      </div>`;
-
-    const conflict = AI.dragConflict(d, 0);
-    const dropState = conflict && conflict.level === 'block' ? ' block' : (conflict && conflict.level === 'warn' ? ' warn' : '');
-
-    return `<div class="day-col ${color}${isT ? ' today' : ''}${dropState}" data-date="${d}" data-action="today:date" data-date="${d}">
-      ${head}${body}
-    </div>`;
-  }).join('');
-
-  const pool = renderPool(store);
-
   const summary = `
     <div class="focus-card week-summary">
       <div class="fc-title">✏️ 本周总结</div>
-      <textarea class="fc-input" id="week-summary-input" placeholder="这周过得怎么样？写几句话吧…" data-action="week:summary" data-week="${wk}">${esc(wn.summary)}</textarea>
+      <textarea class="fc-input" id="week-summary-input" placeholder="本周总结" data-action="week:summary" data-week="${wk}">${esc(wn.summary)}</textarea>
     </div>`;
 
+  // 右侧：一周7天横向
+  const dayCols = days.map(d => {
+    const list = dayTaskList(d);
+    const isT = d === Store.todayStr();
+    const isSel = d === sel;
+    const color = dowColorClass(d);
+    const n = list.length;
+    const dot = n ? `<span class="wk-dot">●${n > 3 ? '3+' : n}</span>` : '';
+    return `<div class="wk-day ${color}${isT ? ' today' : ''}${isSel ? ' sel' : ''}" data-action="week:day" data-date="${d}">
+      <span class="wk-dow">${Store.fmtDOW(d)}</span>
+      <span class="wk-num2">${Number(d.split('-')[2])}</span>
+      ${dot}
+    </div>`;
+  }).join('');
+
+  let expandHtml = '';
+  if (sel) {
+    const list = dayTaskList(sel);
+    const isT = sel === Store.todayStr();
+    expandHtml = `
+      <div class="wk-expand">
+        <div class="we-head"><span>${Store.fmtDOW(sel)} · ${Store.fmtMD(sel)}</span><button data-action="day:add" data-date="${sel}">+</button></div>
+        <div class="we-list">
+          ${list.length ? list.map(t => timelineTaskItem(t, sel)).join('') : `<div class="we-empty">这天还没有任务</div>`}
+        </div>
+        <button class="we-goto" data-action="today:date" data-date="${sel}">${isT ? '进入今天' : '在今日页查看'}</button>
+      </div>`;
+  }
+
   return `
-    <div class="week-mode">
-      ${focusCard}
-      <div class="week-grid week-cols">${cards}</div>
-      ${pool}
-      ${summary}
+    <div class="week-mode week-revised">
+      ${weekSelectorHtml(store, base)}
+      <div class="week-layout">
+        <div class="week-left">
+          ${focusCard}
+          ${summary}
+        </div>
+        <div class="week-right">
+          <div class="week-days">${dayCols}</div>
+          ${expandHtml}
+        </div>
+      </div>
     </div>`;
 }
 
-/* 月视图主体 */
+/* 月选择器：标题"2026/8" + 月份切换箭头（点击展开年月选择器） */
+function monthSelectorHtml(store, base) {
+  const d0 = new Date(base + 'T00:00:00');
+  const yr = d0.getFullYear(), mo = d0.getMonth();
+  const open = !!App.timelineMonthSelect;
+  const years = [yr - 1, yr, yr + 1];
+  const yrHtml = years.map(y => `<div class="ym-year${y === yr ? ' on' : ''}" data-action="month:year" data-year="${y}">${y}</div>`).join('');
+  const moHtml = Array.from({ length: 12 }, (_, i) => `<div class="ym-month${i === mo ? ' on' : ''}" data-action="month:month" data-month="${i}">${i + 1}月</div>`).join('');
+  return `
+    <div class="month-selector">
+      <div class="ms-row">
+        <button class="ms-nav" data-action="timeline:page" data-dir="-1">‹</button>
+        <button class="ms-title" data-action="cal:month">${yr}/${String(mo + 1).padStart(2, '0')}</button>
+        <button class="ms-nav" data-action="timeline:page" data-dir="1">›</button>
+      </div>
+      ${open ? `<div class="ym-picker"><div class="ym-years">${yrHtml}</div><div class="ym-months">${moHtml}</div></div>` : ''}
+    </div>`;
+}
+
+/* 月视图主体（修正版）：月份选择器 + 本月重点/总结 + 标准月历7×6 + AI自动拆解 */
 function renderMonthBody(store, base) {
   const d0 = new Date(base + 'T00:00:00');
   const yr = d0.getFullYear(), mo = d0.getMonth();
@@ -1016,10 +1077,10 @@ function renderMonthBody(store, base) {
     rows.push(cells.slice(r * 7, r * 7 + 7));
   }
 
-  // 本月重点：拖拽目标到此设为本月核心目标
+  // 本月重点：拖拽目标到此设为本月核心目标（带 AI 自动拆解按钮）
   const focusCard = `
     <div class="focus-card month-focus">
-      <div class="fc-title">📌 本月重点</div>
+      <div class="fc-title">📌 本月重点 ${mn.items.length ? `<button class="fc-ai" data-action="month:auto" data-month="${mk}">✦ AI 拆解</button>` : ''}</div>
       <div class="hl-dropzone ${mn.items.length ? 'has' : ''}" data-action="month:highlight" data-month="${mk}">
         ${mn.items.length
           ? mn.items.map(h => `<div class="hl-chip" data-action="month:unhighlight" data-month="${mk}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
@@ -1089,9 +1150,10 @@ function renderMonthBody(store, base) {
     </div>`;
 
   return `
-    <div class="month-mode">
-      <div class="month-weekdays"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+    <div class="month-mode month-revised">
+      ${monthSelectorHtml(store, base)}
       ${focusCard}
+      <div class="month-weekdays"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
       <div class="month-grid">${gridRows}</div>
       <div class="month-summary">
         <div class="ms-total">本月总任务：<strong>${monthTotal}</strong> 件 · 最忙的一天：<strong>${busyDay.d ? Store.fmtMD(busyDay.d).replace('月','日') + '（' + busyDay.n + '件）' : '无'}</strong></div>
@@ -1329,6 +1391,80 @@ function removeMonthHighlight(mk, hid) {
   }
   Store.save();
   render();
+}
+
+/**
+ * AI 自动拆解（月视图）：识别「本月重点」任务，自动拆解为 4 个周任务，
+ * 每个周任务再拆解为每日任务（附「为什么做」），结果自动进入本周视图与今日页。
+ * 同时把本月重点继承进「本周重点」。
+ */
+function doMonthAutoDecompose(mk) {
+  const store = Store.load();
+  store.monthNotes = store.monthNotes || {};
+  const mn = store.monthNotes[mk];
+  if (!mn || !mn.items || !mn.items.length) {
+    aiToast('month_no_highlight');
+    return;
+  }
+  const today = Store.todayStr();
+  const monthStart = (mk + '-01');
+  const monthEnd = Store.toYMD(new Date(Number(mk.split('-')[0]), Number(mk.split('-')[1]), 0));
+  // 取第一个本月重点任务作为拆解对象
+  const top = mn.items[0];
+
+  // 1) 本月重点 → 本周重点继承
+  const wk = Store.weekKey(today);
+  store.weekNotes = store.weekNotes || {};
+  store.weekNotes[wk] = store.weekNotes[wk] || { focus: '', summary: '', items: [] };
+  if (!store.weekNotes[wk].items) store.weekNotes[wk].items = [];
+  if (!store.weekNotes[wk].items.some(h => h.id === top.id)) {
+    store.weekNotes[wk].items.push({ id: top.id, text: top.text, from: 'month' });
+  }
+
+  // 2) 拆 4 个周任务（围绕重点，给why），落到未来4周（每周一）的 weekNotes.focus
+  const mondays = [];
+  let cur = new Date(Store.startOfWeek(today) + 'T00:00:00');
+  if (cur < new Date(today + 'T00:00:00')) cur.setDate(cur.getDate() + 7);
+  for (let i = 0; i < 4; i++) {
+    const md = Store.toYMD(cur);
+    if (md <= monthEnd) { mondays.push(md); }
+    cur.setDate(cur.getDate() + 7);
+  }
+  while (mondays.length < 4) { cur.setDate(cur.getDate() + 7); mondays.push(Store.toYMD(cur)); }
+  const weekPlans = [
+    { text: `规划「${top.text}」的节奏`, why: '先想清楚月球什么， weekly 才有底气' },
+    { text: `推进「${top.text}」核心部分`, why: '趁状态好把最难的一步做了' },
+    { text: `打磨「${top.text}」的细节`, why: '好成果是改出来的' },
+    { text: `收尾并复盘「${top.text}」`, why: '闭环，让下个月更好' }
+  ];
+  mondays.forEach((md, i) => {
+    const rk = Store.weekKey(md);
+    store.weekNotes[rk] = store.weekNotes[rk] || { focus: '', summary: '', items: [] };
+    if (!store.weekNotes[rk].items) store.weekNotes[rk].items = [];
+    const id = Store.uid();
+    if (!store.weekNotes[rk].items.some(h => h.text === weekPlans[i].text)) {
+      store.weekNotes[rk].items.push({ id, text: weekPlans[i].text, from: 'auto' });
+    }
+  });
+
+  // 3) 本周 → 今日任务自动生成（把本周重点项生成到今日页，附带why）
+  store.today.tasks = store.today.tasks || [];
+  const todayItem = store.weekNotes[wk].items.find(h => h.text === weekPlans[0].text);
+  if (todayItem && !store.today.tasks.some(t => t.text === todayItem.text)) {
+    store.today.tasks.push({
+      id: todayItem.id, text: todayItem.text, estMin: 30,
+      priority: true, done: false, goalId: null,
+      why: weekPlans[0].why, slot: 'night', matched: false, routeNote: ''
+    });
+  }
+
+  Store.save();
+  // 跳到本周视图，让用户立刻看到结果
+  App.timelineView = 'week';
+  App.timelineDate = today;
+  App.timelineWeekSelectedDate = today;
+  render();
+  aiToast('month_auto_done', { task: top.text, weeks: 4 });
 }
 
 /** 从任意来源（待办池/任务卡片）取出任务对象，供拖拽设重点 */
@@ -2618,7 +2754,10 @@ function bindEvents() {
       dz.classList.remove('drop-hot');
       if (dz.dataset.action === 'today:highlight') addDayHighlight(dz.dataset.date, obj);
       else if (dz.dataset.action === 'week:highlight') addWeekHighlight(dz.dataset.week, obj);
-      else if (dz.dataset.action === 'month:highlight') addMonthHighlight(dz.dataset.month, obj);
+      else if (dz.dataset.action === 'month:highlight') {
+        addMonthHighlight(dz.dataset.month, obj);
+        aiToast('month_highlight_set', { task: obj ? obj.text : '' });
+      }
       _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = '';
       _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = '';
       return;
@@ -2913,6 +3052,40 @@ function onClick(e) {
       render();
       break;
     }
+    case 'cal:week': App.timelineWeekSelect = !App.timelineWeekSelect; render(); break;
+    case 'week:select': {
+      const wk = btn.dataset.week, base = btn.dataset.base;
+      App.timelineDate = base || Store.todayStr();
+      App.timelineWeekSelect = false;
+      App.timelineWeekSelectedDate = '';
+      render();
+      break;
+    }
+    case 'week:day': {
+      const d = btn.dataset.date;
+      App.timelineWeekSelectedDate = (App.timelineWeekSelectedDate === d) ? '' : d;
+      render();
+      break;
+    }
+    case 'cal:month': App.timelineMonthSelect = !App.timelineMonthSelect; render(); break;
+    case 'month:year': {
+      const y = Number(btn.dataset.year);
+      const base = App.timelineDate || Store.todayStr();
+      const d0 = new Date(base + 'T00:00:00');
+      App.timelineDate = Store.toYMD(new Date(y, d0.getMonth(), 1));
+      App.timelineMonthSelect = true;
+      render();
+      break;
+    }
+    case 'month:month': {
+      const m = Number(btn.dataset.month);
+      const base = App.timelineDate || Store.todayStr();
+      const d0 = new Date(base + 'T00:00:00');
+      App.timelineDate = Store.toYMD(new Date(d0.getFullYear(), m, 1));
+      App.timelineMonthSelect = false;
+      render();
+      break;
+    }
     case 'cat:task': {
       const id = btn.dataset.id, from = btn.dataset.from, date = btn.dataset.date || '';
       openTaskDetail(id, from === 'today' ? 'today' : (from === 'day' ? 'day:' + date : 'backlog'));
@@ -2970,6 +3143,7 @@ function onClick(e) {
     case 'week:unhighlight': removeWeekHighlight(btn.dataset.week, btn.dataset.hid); break;
     case 'month:summary': saveMonthNote(btn.dataset.month); break;
     case 'month:unhighlight': removeMonthHighlight(btn.dataset.month, btn.dataset.hid); break;
+    case 'month:auto': doMonthAutoDecompose(btn.dataset.month); break;
     case 'timeline:task': {
       const d = btn.dataset.date, id = btn.dataset.id;
       openTaskDetail(id, d === Store.todayStr() ? 'today' : 'day:' + d);

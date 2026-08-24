@@ -168,6 +168,17 @@ function renderHeader() {
 
 function renderTabbar() {
   const store = Store.load();
+  const TABS = [
+    { k: 'today', l: '今日', icon: '<circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.6v2.4M12 19v2.4M2.6 12H5M19 12h2.4M5.3 5.3l1.7 1.7M17 17l1.7 1.7M18.7 5.3 17 7M7 17l-1.7 1.7"></path>' },
+    { k: 'schedule', l: '日程', icon: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"></rect><path d="M3.5 9h17M8 3v4M16 3v4"></path>' },
+    { k: 'goals', l: '目标', icon: '<circle cx="12" cy="12" r="8.5"></circle><circle cx="12" cy="12" r="4.5"></circle><circle cx="12" cy="12" r="0.6" fill="currentColor"></circle>' },
+    { k: 'backlog', l: '待办', icon: '<path d="M4 6h16M4 12h16M4 18h10"></path><circle cx="19" cy="18" r="2.4"></circle>' },
+    { k: 'review', l: '复盘', icon: '<path d="M3.5 20V10M9 20V4M14.5 20v-8M20 20V7"></path>' },
+  ];
+  const $bar = $('#tabbar');
+  if (!$bar) return;
+  $bar.className = 'tabbar';
+  $bar.innerHTML = TABS.map(t => `<button class="tab-btn" data-action="tab:switch" data-tab="${t.k}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${t.icon}</svg><span>${t.l}</span></button>`).join('');
   $$('#tabbar .tab-btn').forEach(b => {
     const isOn = b.dataset.tab === App.tab;
     b.classList.toggle('on', isOn);

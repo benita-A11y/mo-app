@@ -24,6 +24,7 @@ const App = {
   timelineWeekSelect: false,  // 周选择器是否展开
   timelineMonthSelect: false, // 月（年/月）选择器是否展开
   timelineFocusTab: 'focus',  // 重点/总结：focus | summary
+  catCollapsed: {},            // 今天视图分类区折叠状态 { tag: bool }
   ocrDraft: null,
   pendingGoal: null,
   longPressTimer: null,
@@ -869,70 +870,90 @@ function renderTodayBody(store, base) {
       </div>
     </div>`;
 
-  /* ---------- 标签分类（6色） ---------- */
+  /* ---------- 标签分类（6色 · 手动归类容器）----------
+     融合设计：分类本身复用墨已有的 6 色 tag 字段。
+     - 收集箱里的任务拖进来 → 写入 tag=该色（手动归类，无自动分类）。
+     - 只有被手动拖进来的任务才显示在该分类下（空容器时显示「拖任务到此」）。
+     - 已归类但尚未安排日期(date=='')的任务，在分类区顶部「待安排」提示行，
+       让用户的归类不被漏看（ISFJ「被看见」）。
+     - 已归类且已安排(date!='')的任务，带日期徽标，证明它已接入时间轴闭环。 */
   const TAGS = AI.TAGS;
-  // 收集所有任务并按标签分组（含已安排与未安排，排除已完成度不显示的也显示）
-  const allTasks = [];
-  store.backlog.forEach(t => allTasks.push({ t, from: 'backlog', date: t.date || '' }));
-  if (store.today && Array.isArray(store.today.tasks)) store.today.tasks.forEach(t => allTasks.push({ t, from: 'today', date: d }));
-  if (store.dayTasks) Object.keys(store.dayTasks).forEach(dt => store.dayTasks[dt].forEach(t => allTasks.push({ t, from: 'day', date: dt })));
-  const byTag = {};
-  Object.keys(TAGS).forEach(k => byTag[k] = []);
-  allTasks.forEach(o => { if (o.t.tag && byTag[o.t.tag]) byTag[o.t.tag].push(o); });
+  const collapsed = App.catCollapsed || {};
+  const catItems = {};
+  Object.keys(TAGS).forEach(k => catItems[k] = []);
+  // 仅从 backlog 取任务按 tag 归类（today/dayTasks 里的任务已在本日时间线，不重复占分类位）
+  store.backlog.forEach(t => {
+    if (t.tag && catItems[t.tag]) catItems[t.tag].push(t);
+  });
 
   const catBlocks = Object.keys(TAGS).map(k => {
-    const items = byTag[k];
+    const all = catItems[k] || [];
+    const arranged = all.filter(t => t.date);   // 已安排日期（带徽标）
+    const unsched = all.filter(t => !t.date);    // 已归类但未安排（待安排提示）
     const dot = `<span class="tag-dot ${k}"></span>`;
-    const listHtml = items.length
-      ? items.map(o => `
-        <div class="cat-item ${o.t.done ? 'done' : ''}" draggable="true" data-action="cat:task" data-id="${o.t.id}" data-from="${o.from}" data-date="${o.date}" data-tag="${k}">
-          <span class="ci-check">${o.t.done ? '✓' : ''}</span>
-          <span class="ci-text">${esc(o.t.text)}</span>
+    const isCol = !!collapsed[k];
+    // 待安排提示行（仅在该分类内有未安排任务时显示）
+    const unschedRow = unsched.length
+      ? `<div class="cat-unsched">⏳ 待安排 ${unsched.length} 件 · 拖到日历即可排入</div>` : '';
+    const listHtml = arranged.length
+      ? arranged.map(t => `
+        <div class="cat-item" draggable="true" data-action="cat:task" data-id="${t.id}" data-from="backlog" data-date="${t.date}" data-tag="${k}">
+          <span class="ci-check">${t.done ? '✓' : ''}</span>
+          <span class="ci-text">${esc(t.text)}</span>
+          <span class="ci-date" title="已安排到${Store.fmtMD(t.date)}">${Store.fmtMD(t.date)}</span>
         </div>`).join('')
-      : '<div class="cat-empty">—</div>';
+      : (isCol ? '' : '<div class="cat-empty">拖任务到此归类</div>');
     return `
       <div class="cat-block" data-tag="${k}">
-        <div class="cat-head" data-action="cat:tag" data-tag="${k}">${dot}<span>${TAGS[k].name}</span><em>${items.length}</em></div>
-        <div class="cat-list">${listHtml}</div>
+        <div class="cat-head" data-action="cat:toggle" data-tag="${k}">
+          ${dot}<span>${TAGS[k].name}</span>
+          <em>${all.length}</em>
+          <span class="cat-fold">${isCol ? '▸' : '▾'}</span>
+        </div>
+        ${isCol ? '' : `<div class="cat-list">${unschedRow}${listHtml}</div>`}
       </div>`;
   }).join('');
 
-  /* ---------- 收集箱 ---------- */
-  // 未分类未安排：backlog 中无 date 的 + inbox（灵感箱）
-  const boxTasks = [];
-  store.backlog.forEach(t => { if (!t.date) boxTasks.push({ t, from: 'backlog' }); });
-  (store.inbox || []).forEach(it => boxTasks.push({ t: { id: it.id, text: it.text, done: false, _inbox: true }, from: 'inbox' }));
-  // 按录入时间排序（inbox 用 at，backlog 无 date 用 originalDate 兜底 0）
-  boxTasks.sort((a, b) => {
-    const ta = a.from === 'inbox' ? (a.t.at || 0) : (a.t.originalDate || '');
-    const tb = b.from === 'inbox' ? (b.t.at || 0) : (b.t.originalDate || '');
-    return String(tb).localeCompare(String(ta));
-  });
+  /* ---------- 收集箱（未分类 + 未安排）----------
+     融合设计：收集箱 = backlog 中 tag=='' 且 date=='' 的任务。
+     - 按 originalDate 录入时间倒序（最新在上）。
+     - 已有分类的任务不出现在这里（它们已在左侧分类区）。
+     - inbox 灵感箱仍归「待办」页管理，避免两个"未分类入口"混淆。 */
+  const boxTasks = store.backlog
+    .filter(t => !t.tag && !t.date)
+    .sort((a, b) => String(b.originalDate || '').localeCompare(String(a.originalDate || '')));
   const boxHtml = boxTasks.length
     ? boxTasks.map(o => `
-      <div class="box-item" draggable="true" data-action="box:task" data-id="${o.t.id}" data-from="${o.from}">
+      <div class="box-item" draggable="true" data-action="box:task" data-id="${o.id}" data-from="backlog">
         <span class="ci-check"></span>
-        <span class="ci-text">${esc(o.t.text)}</span>
+        <span class="ci-text">${esc(o.text)}</span>
       </div>`).join('')
     : '<div class="cat-empty">收集箱是空的，去「待办」页记点想法吧 ✨</div>';
 
   const cols = `
     <div class="today-cols">
       <div class="today-cat">
-        <div class="col-title">标签分类</div>
+        <div class="col-title">🏷️ 分类 <span class="col-sub">拖任务进来即归类</span></div>
         <div class="cat-blocks">${catBlocks}</div>
       </div>
       <div class="today-box">
-        <div class="col-title">📦 收集箱 <em>${boxTasks.length}</em></div>
+        <div class="col-title">📦 收集箱 <em>${boxTasks.length}</em> <span class="col-sub">未分类·未安排</span></div>
         <div class="box-dropzone" data-action="box:drop">${boxHtml}</div>
       </div>
     </div>`;
+
+  // 欠安排提醒：已归类但还没排入任何日期的任务总数（不让用户的归类被漏看）
+  const unschedTotal = Object.keys(catItems).reduce((s, k) => s + (catItems[k] || []).filter(t => !t.date).length, 0);
+  const unschedTip = unschedTotal
+    ? `<div class="today-tip">💜 有 ${unschedTotal} 件已归类、还没排入日期，拖到日历即可安放，不急。</div>`
+    : '';
 
   return `
     <div class="today-mode">
       ${cal}
       ${focusRow}
       ${cols}
+      ${unschedTip}
     </div>`;
 }
 
@@ -3100,6 +3121,13 @@ function onClick(e) {
       } else {
         openTaskDetail(id, 'backlog');
       }
+      break;
+    }
+    case 'cat:toggle': {
+      const k = btn.dataset.tag;
+      App.catCollapsed = App.catCollapsed || {};
+      App.catCollapsed[k] = !App.catCollapsed[k];
+      render();
       break;
     }
     case 'cat:tag': {

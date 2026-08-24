@@ -1,1 +1,10 @@
 [plan] 19 files
+[upload] d2.txt CREATED (verified)
+[upload] design-proposal-schedule-v3.md UPDATED (verified)
+[upload] design-proposal-schedule-v4.md UPDATED (verified)
+[upload] icons/apple-touch-icon.png UPDATED (verified)
+[upload] icons/icon-192.png UPDATED (verified)
+[upload] icons/icon-512.png UPDATED (verified)
+[upload] icons/icon-maskable-512.png UPDATED (verified)
+[upload] icons/mo-avatar.png UPDATED (verified)
+[upload] index.html UPDATED (verified)

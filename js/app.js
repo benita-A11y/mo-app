@@ -16,14 +16,7 @@ const settingsIcon = () => '<svg viewBox="0 0 24 24" fill="none" stroke="current
 const App = {
   tab: 'today',
   reviewTab: 'weekly',
-  timelineView: 'week',       // 时间轴：today / week / month
-  timelineDate: Store ? Store.todayStr() : '',
   todayViewDate: Store ? Store.todayStr() : '', // 今日页当前查看日期
-  timelineSelectedDate: '',   // 时间轴（月视图）中选中的日期（展开任务列表）
-  timelineWeekSelectedDate: '', // 周视图中展开的日期
-  timelineWeekSelect: false,  // 周选择器是否展开
-  timelineMonthSelect: false, // 月（年/月）选择器是否展开
-  timelineFocusTab: 'focus',  // 重点/总结：focus | summary
   catCollapsed: {},            // 今天视图分类区折叠状态 { tag: bool }
   ocrDraft: null,
   pendingGoal: null,
@@ -34,7 +27,18 @@ const App = {
   moodLabels: { '😊': '状态不错', '😐': '一般般', '😔': '有点累' },
   inboxTag: '',               // 灵感箱当前手动选中的标签
   inboxTagRec: '',            // 灵感箱AI推荐的标签
-  backlogFilter: ''           // 待办页标签筛选
+  backlogFilter: '',          // 待办页标签筛选
+  /* —— 日程 Tab —— */
+  schedView: 'day',           // day / week / month
+  schedDate: Store ? Store.todayStr() : '',
+  schedWeekStart: Store ? Store.startOfWeek(Store.todayStr()) : '',
+  schedCalOpen: false,
+  schedLeftOpen: true,        // 左侧导航抽屉：桌面端默认展开；移动端为覆盖层
+  schedRightOpen: true,       // 右侧收集箱抽屉：桌面端默认展开；移动端为覆盖层
+  schedSidebarTab: 'inbox',   // inbox / tags / allday（右侧抽屉内部 Tab）
+  schedFilter: '',            // '' 全部；或 category；或 'inbox' / 'allday' / 四象限 q1/q2/q3/q4
+  schedLeftNav: '',           // 左侧导航当前选中：'' / overdue / today / week / month / 标签键 / 四象限
+  schedFocusTab: 'focus'      // 本周：focus 重点 / summary 总结
 };
 
 /* ================= 初始化 ================= */
@@ -42,6 +46,9 @@ function init() {
   const store = Store.load();
   applyTheme(store.settings);
   rolloverIfNewDay();
+  App.schedLeftOpen = window.innerWidth >= 760; // 桌面端默认展开左侧导航，移动端为覆盖层
+  App.schedRightOpen = window.innerWidth >= 760; // 桌面端默认展开右侧收集箱，移动端为覆盖层
+  App.schedWeekStart = Store.startOfWeek(App.schedDate || Store.todayStr());
   bindEvents();
   render();
   maybeOnboardSkeleton();
@@ -103,6 +110,8 @@ function applyTheme(settings) {
 
 /* ================= 渲染 ================= */
 function render() {
+  const $app = $('#app');
+  if ($app) $app.classList.toggle('wide-mode', App.tab === 'schedule');
   renderHeader();
   renderView();
   renderTabbar();
@@ -128,7 +137,7 @@ function renderHeader() {
         </div>
       </div>`;
   } else {
-    const titles = { goals: '目标', backlog: '待办', timeline: '时间轴', review: '复盘' };
+    const titles = { goals: '目标', backlog: '待办', review: '复盘', schedule: '日程' };
     // 副标题：每个页面第一眼的总览
     let sub = '';
     if (App.tab === 'goals') {
@@ -137,10 +146,14 @@ function renderHeader() {
       sub = `进行中 ${active} 个 · 已完成 ${done} 个`;
     } else if (App.tab === 'backlog') {
       sub = `共 ${store.backlog.length} 件`;
-    } else if (App.tab === 'timeline') {
-      sub = App.timelineView === 'week' ? '周视图 · 拖动待办到日期' : '月视图 · 任务密度';
     } else if (App.tab === 'review') {
       sub = App.reviewTab === 'weekly' ? '每周回顾' : '每月回顾';
+    } else if (App.tab === 'schedule') {
+      const sch = (store.schedule && store.schedule.tasks) || [];
+      const today = Store.todayStr();
+      const od = sch.filter(t => t.dueDate && t.dueDate < today && !t.isCompleted).length;
+      const td = sch.filter(t => t.dueDate === today && !t.isCompleted).length;
+      sub = `今日 ${td} 件 · 逾期 ${od} 件`;
     }
     $h.innerHTML = `
       <div class="header-inner centered">
@@ -178,7 +191,7 @@ function renderView() {
   if (App.tab === 'today') $v.innerHTML = renderToday();
   else if (App.tab === 'goals') $v.innerHTML = renderGoals();
   else if (App.tab === 'backlog') $v.innerHTML = renderBacklog();
-  else if (App.tab === 'timeline') $v.innerHTML = renderTimeline();
+  else if (App.tab === 'schedule') $v.innerHTML = renderSchedule();
   else if (App.tab === 'review') $v.innerHTML = renderReview();
   if (replay) { void $v.offsetWidth; $v.classList.add('view-enter'); }
   // 异步 AI 个性化：防抖合并调度，避免每次点击都触发多个网络请求
@@ -311,8 +324,21 @@ function renderToday() {
   // 当前查看的日期（顶部日期导航条切换）。今天用 store.today，其他日期用 dayTasks
   const viewDate = App.todayViewDate || Store.todayStr();
   App.todayViewDate = viewDate;
+  // 今日视图 = 今日专属任务 + 用户在「日程」里安排了今天的事（合并汇入，去重）
+  const schedTodayTasks = (store.schedule && store.schedule.tasks || [])
+    .filter(t => t.dueDate === viewDate && !t.isCompleted)
+    .map(t => ({
+      id: 's_' + t.id, text: t.title, estMin: t.estMin || 15, priority: (t.priority === '高' || t.priority === '紧急'),
+      done: false, goalId: null, why: '', slot: '', matched: false,
+      routeNote: '', fromSchedule: true, schedId: t.id, tag: t.category, link: 'schedule'
+    }));
   const tasksForDate = (d) => {
-    if (d === Store.todayStr()) return store.today.tasks;
+    if (d === Store.todayStr()) {
+      const base = store.today.tasks.slice();
+      const ids = new Set(base.map(t => t.id));
+      schedTodayTasks.forEach(st => { if (!ids.has(st.id)) base.push(st); });
+      return base;
+    }
     return (store.dayTasks && store.dayTasks[d]) || [];
   };
   const viewTasks = tasksForDate(viewDate);
@@ -354,11 +380,12 @@ function renderToday() {
     // 第二行右侧：顺路显示动线描述，否则显示原因（都不重复出现）
     const note = sug ? (t.routeNote || slotByKey[t.slot].hint || '') : (t.why || '');
     const tagDot = t.tag ? `<span class="tag-dot ${t.tag}" title="${AI.TAGS[t.tag] ? AI.TAGS[t.tag].name : ''}"></span>` : '';
+    const srcBadge = t.fromSchedule ? '<span class="tag sched-badge" title="来自日程安排">📅 日程</span>' : '';
     return `
-      <li class="task ${t.done ? 'done' : ''}${t.doing ? ' doing' : ''}${sug ? ' has-sug' : ''}" data-action="task:detail" data-id="${t.id}" ${t.done ? '' : 'draggable="true" title="点击查看详情 · 拖拽可调整顺序"'}">
+      <li class="task ${t.done ? 'done' : ''}${t.doing ? ' doing' : ''}${sug ? ' has-sug' : ''}${t.fromSchedule ? ' from-sched' : ''}" data-action="task:detail" data-id="${t.id}" ${t.done ? '' : 'draggable="true" title="点击查看详情 · 拖拽可调整顺序"'}">
         <span class="check" data-action="task:check" data-id="${t.id}">${t.done ? '🌱' : ''}</span>
         <div class="task-body">
-          <span class="task-text">${tagDot}${esc(t.text)}</span>
+          <span class="task-text">${tagDot}${srcBadge}${esc(t.text)}</span>
           <span class="task-meta">${tags}${note ? `<span class="hint">${esc(note)}</span>` : ''}</span>
           ${sug ? `
             <div class="route-acts">
@@ -427,6 +454,8 @@ function renderToday() {
       </div>
 
       ${doneSection}
+
+      ${isTodayView ? schedLinkBanner() : ''}
 
       ${isTodayView ? `
       <div class="today-bottom">
@@ -670,491 +699,8 @@ function dowColor(date) {
   return map[DOW_COLORS[(new Date(date + 'T00:00:00').getDay() + 6) % 7]] || map.default;
 }
 
-/* 渲染时间轴页面（今天 / 本周 / 本月 三视图） */
-function renderTimeline() {
-  const store = Store.load();
-  const view = App.timelineView || 'week';
-  const base = App.timelineDate || Store.todayStr();
 
-  let title = '时间轴';
-  if (view === 'today') {
-    const d = base;
-    title = `今天 · ${Store.fmtMD(d)} ${Store.fmtDOW(d)}`;
-  } else if (view === 'week') {
-    const days = Store.weekDates(base);
-    title = `本周 · ${Store.fmtMD(days[0])} - ${Store.fmtMD(days[6])} 第${Store.weekNumber(base)}周`;
-  } else {
-    const pm = Store.parseYMD(base);
-    title = `${pm.y}年${pm.m}月`;
-  }
 
-  const header = `
-    <div class="timeline-toolbar">
-      <div class="tl-views">
-        <button class="tl-view ${view === 'today' ? 'on' : ''}" data-action="timeline:view" data-view="today">📅 今天</button>
-        <button class="tl-view ${view === 'week' ? 'on' : ''}" data-action="timeline:view" data-view="week">📆 本周</button>
-        <button class="tl-view ${view === 'month' ? 'on' : ''}" data-action="timeline:view" data-view="month">🗓️ 本月</button>
-      </div>
-      ${view === 'month'
-        ? `<div class="tl-nav">
-             <button class="tl-tool" data-action="timeline:page" data-dir="-1">‹</button>
-             <button class="tl-tool" data-action="timeline:page" data-dir="1">›</button>
-           </div>`
-        : ''}
-    </div>`;
-
-  let body = '';
-  if (view === 'today') body = renderTodayBody(store, base);
-  else if (view === 'week') body = renderWeekBody(store, base);
-  else body = renderMonthBody(store, base);
-
-  return `<div class="timeline-page" data-view="${view}">${header}${body}</div>`;
-}
-
-/* 今天视图主体：可展开/收起月历 + 每日重点/总结 + 标签分类 + 收集箱 */
-function renderTodayBody(store, base) {
-  const d = App.todayViewDate || base;
-  const isT = d === Store.todayStr();
-  const open = !!App.todayCalOpen;
-
-  /* ---------- 月历 ---------- */
-  const pm = Store.parseYMD(d);
-  const monthTitle = `${pm.m}月`;
-  const calOpen = open ? '▲' : '▼';
-
-  // 构建日期格
-  function miniCell(ymd) {
-    if (!ymd) return `<div class="mini-cell empty"></div>`;
-    const has = scheduledCount(ymd) > 0;
-    const isCur = ymd === Store.todayStr();
-    const isSel = ymd === d;
-    return `<div class="mini-cell${isCur ? ' cur' : ''}${isSel ? ' sel' : ''}${has ? ' has' : ''}" data-action="cal:date" data-date="${ymd}">
-      <span class="mc-num">${Number(ymd.split('-')[2])}</span>
-      ${has ? '<span class="mc-dot"></span>' : ''}
-    </div>`;
-  }
-
-  let calBody;
-  if (open) {
-    // 整月：7列×6行
-    const yr = pm.y, mo = pm.m;
-    const firstDow = (new Date(yr, mo - 1, 1).getDay() + 6) % 7; // 周一=0
-    const dim = Store.monthDays(yr, mo);
-    const cells = [];
-    for (let i = 0; i < firstDow; i++) cells.push(null);
-    for (let dd = 1; dd <= dim; dd++) cells.push(`${yr}-${String(mo).padStart(2, '0')}-${String(dd).padStart(2, '0')}`);
-    while (cells.length % 7 !== 0) cells.push(null);
-    const rows = [];
-    for (let r = 0; r < cells.length / 7; r++) {
-      rows.push('<div class="mini-row">' + cells.slice(r * 7, r * 7 + 7).map(miniCell).join('') + '</div>');
-    }
-    calBody = `<div class="mini-grid">${rows.join('')}</div>`;
-  } else {
-    // 当前周7天
-    const wk = Store.weekDates(d);
-    calBody = `<div class="mini-row">${wk.map(miniCell).join('')}</div>`;
-  }
-
-  const cal = `
-    <div class="mini-cal">
-      <button class="mini-month" data-action="cal:toggle">${monthTitle} ${calOpen}</button>
-      <div class="mini-weekdays"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
-      ${calBody}
-    </div>`;
-
-  /* ---------- 每日重点 + 每日总结（并排） ---------- */
-  const hi = (store.dayHighlights && store.dayHighlights[d]) || [];
-  const focusRow = `
-    <div class="today-focus-row">
-      <div class="today-focus-card">
-        <div class="tfc-title">📌 每日重点</div>
-        <div class="hl-dropzone ${hi.length ? 'has' : ''}" data-action="today:highlight" data-date="${d}">
-          ${hi.length
-            ? hi.map(h => `<div class="hl-chip" data-action="today:unhighlight" data-date="${d}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
-            : '<span class="hl-tip">将任务拖到这里即可关联</span>'}
-        </div>
-      </div>
-      <div class="today-focus-card">
-        <div class="tfc-title">✏️ 每日总结</div>
-        <textarea class="tf-input" id="today-summary-input" placeholder="今天过得怎么样？写一句话吧…" data-action="today:summary" data-date="${d}">${esc((store.todaySummary && store.todaySummary[d]) || '')}</textarea>
-      </div>
-    </div>`;
-
-  /* ---------- 标签分类（6色 · 手动归类容器）----------
-     融合设计：分类本身复用墨已有的 6 色 tag 字段。
-     - 收集箱里的任务拖进来 → 写入 tag=该色（手动归类，无自动分类）。
-     - 只有被手动拖进来的任务才显示在该分类下（空容器时显示「拖任务到此」）。
-     - 已归类但尚未安排日期(date=='')的任务，在分类区顶部「待安排」提示行，
-       让用户的归类不被漏看（ISFJ「被看见」）。
-     - 已归类且已安排(date!='')的任务，带日期徽标，证明它已接入时间轴闭环。 */
-  const TAGS = AI.TAGS;
-  const collapsed = App.catCollapsed || {};
-  const catItems = {};
-  Object.keys(TAGS).forEach(k => catItems[k] = []);
-  // 仅从 backlog 取任务按 tag 归类（today/dayTasks 里的任务已在本日时间线，不重复占分类位）
-  store.backlog.forEach(t => {
-    if (t.tag && catItems[t.tag]) catItems[t.tag].push(t);
-  });
-
-  const catBlocks = Object.keys(TAGS).map(k => {
-    const all = catItems[k] || [];
-    const arranged = all.filter(t => t.date);   // 已安排日期（带徽标）
-    const unsched = all.filter(t => !t.date);    // 已归类但未安排（待安排提示）
-    const dot = `<span class="tag-dot ${k}"></span>`;
-    const isCol = !!collapsed[k];
-    // 待安排提示行（仅在该分类内有未安排任务时显示）
-    const unschedRow = unsched.length
-      ? `<div class="cat-unsched">⏳ 待安排 ${unsched.length} 件 · 拖到日历即可排入</div>` : '';
-    const listHtml = arranged.length
-      ? arranged.map(t => `
-        <div class="cat-item" draggable="true" data-action="cat:task" data-id="${t.id}" data-from="backlog" data-date="${t.date}" data-tag="${k}">
-          <span class="ci-check">${t.done ? '✓' : ''}</span>
-          <span class="ci-text">${esc(t.text)}</span>
-          <span class="ci-date" title="已安排到${Store.fmtMD(t.date)}">${Store.fmtMD(t.date)}</span>
-        </div>`).join('')
-      : (isCol ? '' : '<div class="cat-empty">拖任务到此归类</div>');
-    return `
-      <div class="cat-block" data-tag="${k}">
-        <div class="cat-head" data-action="cat:toggle" data-tag="${k}">
-          ${dot}<span>${TAGS[k].name}</span>
-          <em>${all.length}</em>
-          <span class="cat-fold">${isCol ? '▸' : '▾'}</span>
-        </div>
-        ${isCol ? '' : `<div class="cat-list">${unschedRow}${listHtml}</div>`}
-      </div>`;
-  }).join('');
-
-  /* ---------- 收集箱（未分类 + 未安排）----------
-     融合设计：收集箱 = backlog 中 tag=='' 且 date=='' 的任务。
-     - 按 originalDate 录入时间倒序（最新在上）。
-     - 已有分类的任务不出现在这里（它们已在左侧分类区）。
-     - inbox 灵感箱仍归「待办」页管理，避免两个"未分类入口"混淆。 */
-  const boxTasks = store.backlog
-    .filter(t => !t.tag && !t.date)
-    .sort((a, b) => String(b.originalDate || '').localeCompare(String(a.originalDate || '')));
-  const boxHtml = boxTasks.length
-    ? boxTasks.map(o => `
-      <div class="box-item" draggable="true" data-action="box:task" data-id="${o.id}" data-from="backlog">
-        <span class="ci-check"></span>
-        <span class="ci-text">${esc(o.text)}</span>
-      </div>`).join('')
-    : '<div class="cat-empty">收集箱是空的，去「待办」页记点想法吧 ✨</div>';
-
-  const cols = `
-    <div class="today-cols">
-      <div class="today-cat">
-        <div class="col-title">🏷️ 分类 <span class="col-sub">拖任务进来即归类</span></div>
-        <div class="cat-blocks">${catBlocks}</div>
-      </div>
-      <div class="today-box">
-        <div class="col-title">📦 收集箱 <em>${boxTasks.length}</em> <span class="col-sub">未分类·未安排</span></div>
-        <div class="box-dropzone" data-action="box:drop">${boxHtml}</div>
-      </div>
-    </div>`;
-
-  // 欠安排提醒：已归类但还没排入任何日期的任务总数（不让用户的归类被漏看）
-  const unschedTotal = Object.keys(catItems).reduce((s, k) => s + (catItems[k] || []).filter(t => !t.date).length, 0);
-  const unschedTip = unschedTotal
-    ? `<div class="today-tip">💜 有 ${unschedTotal} 件已归类、还没排入日期，拖到日历即可安放，不急。</div>`
-    : '';
-
-  return `
-    <div class="today-mode">
-      ${cal}
-      ${focusRow}
-      ${cols}
-      ${unschedTip}
-    </div>`;
-}
-
-/* 周选择器：展开月历网格，按周分行，点击某周行切换 */
-function weekSelectorHtml(store, base) {
-  const wk = Store.weekKey(base);
-  const wn = Store.weekNumber(base);
-  const d0 = new Date(base + 'T00:00:00');
-  const yr = d0.getFullYear(), mo = d0.getMonth();
-  const firstDow = (new Date(yr, mo, 1).getDay() + 6) % 7;
-  const dim = Store.monthDays(yr, mo + 1);
-  const cells = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= dim; d++) cells.push(`${yr}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-  while (cells.length % 7 !== 0) cells.push(null);
-  const open = !!App.timelineWeekSelect;
-  const rows = [];
-  for (let r = 0; r < cells.length / 7; r++) {
-    const row = cells.slice(r * 7, r * 7 + 7);
-    const monday = row.find(Boolean);
-    if (!monday) { rows.push(`<div class="wk-row empty"></div>`); continue; }
-    const rk = Store.weekKey(monday);
-    const isCur = rk === wk;
-    const nums = row.map(d => d ? `<span class="${d === Store.todayStr() ? 'md-today' : ''}">${Number(d.split('-')[2])}</span>` : '<span class="md-blank"></span>').join('');
-    rows.push(`<div class="wk-row${isCur ? ' cur' : ''}" data-action="week:select" data-week="${rk}" data-base="${monday}">
-      <span class="wk-num">W${Store.weekNumber(monday)}</span>${nums}</div>`);
-  }
-  return `
-    <div class="week-selector">
-      <button class="wk-toggle" data-action="cal:week">W${wn}，本周 ${open ? '▲' : '▼'}</button>
-      ${open ? `<div class="wk-grid"><div class="wk-weekdays"><span></span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>${rows.join('')}</div>` : ''}
-    </div>`;
-}
-
-/* 周视图主体（修正版）：顶部周选择器 + 左本周重点/总结 + 右7天横向 + 点击展开日任务 */
-function renderWeekBody(store, base) {
-  const days = Store.weekDates(base);
-  const wk = Store.weekKey(base);
-  const wn = store.weekNotes[wk] || { focus: '', summary: '', items: [] };
-  if (!wn.items) wn.items = [];
-
-  const sel = App.timelineWeekSelectedDate || null;
-
-  // 左侧：本周重点（可拖拽设重点）
-  const focusCard = `
-    <div class="focus-card week-focus">
-      <div class="fc-title">📌 本周重点</div>
-      <div class="hl-dropzone ${wn.items.length ? 'has' : ''}" data-action="week:highlight" data-week="${wk}">
-        ${wn.items.length
-          ? wn.items.map(h => `<div class="hl-chip" data-action="week:unhighlight" data-week="${wk}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
-          : '<span class="hl-tip">可拖拽任务到此设为本周重点</span>'}
-      </div>
-    </div>`;
-
-  const summary = `
-    <div class="focus-card week-summary">
-      <div class="fc-title">✏️ 本周总结</div>
-      <textarea class="fc-input" id="week-summary-input" placeholder="本周总结" data-action="week:summary" data-week="${wk}">${esc(wn.summary)}</textarea>
-    </div>`;
-
-  // 右侧：一周7天横向
-  const dayCols = days.map(d => {
-    const list = dayTaskList(d);
-    const isT = d === Store.todayStr();
-    const isSel = d === sel;
-    const color = dowColorClass(d);
-    const n = list.length;
-    const dot = n ? `<span class="wk-dot">●${n > 3 ? '3+' : n}</span>` : '';
-    return `<div class="wk-day ${color}${isT ? ' today' : ''}${isSel ? ' sel' : ''}" data-action="week:day" data-date="${d}">
-      <span class="wk-dow">${Store.fmtDOW(d)}</span>
-      <span class="wk-num2">${Number(d.split('-')[2])}</span>
-      ${dot}
-    </div>`;
-  }).join('');
-
-  let expandHtml = '';
-  if (sel) {
-    const list = dayTaskList(sel);
-    const isT = sel === Store.todayStr();
-    expandHtml = `
-      <div class="wk-expand">
-        <div class="we-head"><span>${Store.fmtDOW(sel)} · ${Store.fmtMD(sel)}</span><button data-action="day:add" data-date="${sel}">+</button></div>
-        <div class="we-list">
-          ${list.length ? list.map(t => timelineTaskItem(t, sel)).join('') : `<div class="we-empty">这天还没有任务</div>`}
-        </div>
-        <button class="we-goto" data-action="today:date" data-date="${sel}">${isT ? '进入今天' : '在今日页查看'}</button>
-      </div>`;
-  }
-
-  return `
-    <div class="week-mode week-revised">
-      ${weekSelectorHtml(store, base)}
-      <div class="week-layout">
-        <div class="week-left">
-          ${focusCard}
-          ${summary}
-        </div>
-        <div class="week-right">
-          <div class="week-days">${dayCols}</div>
-          ${expandHtml}
-        </div>
-      </div>
-    </div>`;
-}
-
-/* 月选择器：标题"2026/8" + 月份切换箭头（点击展开年月选择器） */
-function monthSelectorHtml(store, base) {
-  const d0 = new Date(base + 'T00:00:00');
-  const yr = d0.getFullYear(), mo = d0.getMonth();
-  const open = !!App.timelineMonthSelect;
-  const years = [yr - 1, yr, yr + 1];
-  const yrHtml = years.map(y => `<div class="ym-year${y === yr ? ' on' : ''}" data-action="month:year" data-year="${y}">${y}</div>`).join('');
-  const moHtml = Array.from({ length: 12 }, (_, i) => `<div class="ym-month${i === mo ? ' on' : ''}" data-action="month:month" data-month="${i}">${i + 1}月</div>`).join('');
-  return `
-    <div class="month-selector">
-      <div class="ms-row">
-        <button class="ms-nav" data-action="timeline:page" data-dir="-1">‹</button>
-        <button class="ms-title" data-action="cal:month">${yr}/${String(mo + 1).padStart(2, '0')}</button>
-        <button class="ms-nav" data-action="timeline:page" data-dir="1">›</button>
-      </div>
-      ${open ? `<div class="ym-picker"><div class="ym-years">${yrHtml}</div><div class="ym-months">${moHtml}</div></div>` : ''}
-    </div>`;
-}
-
-/* 月视图主体（修正版）：月份选择器 + 本月重点/总结 + 标准月历7×6 + AI自动拆解 */
-function renderMonthBody(store, base) {
-  const d0 = new Date(base + 'T00:00:00');
-  const yr = d0.getFullYear(), mo = d0.getMonth();
-  const mk = `${yr}-${String(mo + 1).padStart(2, '0')}`;
-  const mn = store.monthNotes[mk] || { focus: '', summary: '', items: [] };
-  if (!mn.items) mn.items = [];
-
-  const firstDow = (new Date(yr, mo, 1).getDay() + 6) % 7;
-  const daysInMonth = Store.monthDays(yr, mo + 1);
-  const cells = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(`${yr}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-  while (cells.length % 7 !== 0) cells.push(null);
-
-  const rows = [];
-  for (let r = 0; r < cells.length / 7; r++) {
-    rows.push(cells.slice(r * 7, r * 7 + 7));
-  }
-
-  // 本月重点：拖拽目标到此设为本月核心目标（带 AI 自动拆解按钮）
-  const focusCard = `
-    <div class="focus-card month-focus">
-      <div class="fc-title">📌 本月重点 ${mn.items.length ? `<button class="fc-ai" data-action="month:auto" data-month="${mk}">✦ AI 拆解</button>` : ''}</div>
-      <div class="hl-dropzone ${mn.items.length ? 'has' : ''}" data-action="month:highlight" data-month="${mk}">
-        ${mn.items.length
-          ? mn.items.map(h => `<div class="hl-chip" data-action="month:unhighlight" data-month="${mk}" data-hid="${h.id}">${esc(h.text)}<span class="hl-x">×</span></div>`).join('')
-          : '<span class="hl-tip">可拖拽目标至此设为当月核心</span>'}
-      </div>
-    </div>`;
-
-  const gridRows = rows.map(row => {
-    const hasSel = row.some(d => d === App.timelineSelectedDate);
-    const cellsHtml = row.map(d => {
-      if (!d) return `<div class="month-cell empty"></div>`;
-      const list = dayTaskList(d);
-      const n = list.length;
-      const done = list.filter(t => t.done).length;
-      const isT = d === Store.todayStr();
-      const isSel = d === App.timelineSelectedDate;
-      const color = dowColorClass(d);
-      const dens = AI.monthDensity(n);
-      const dot = n && dens.size
-        ? `<span class="mc-dot" style="width:${dens.size}px;height:${dens.size}px;background:${dens.color}"></span>`
-        : '';
-      return `<div class="month-cell ${color}${isT ? ' today' : ''}${isSel ? ' selected' : ''}${n ? ' has-task' : ''}" data-date="${d}" data-action="today:date" data-date="${d}">
-        <span class="mc-date">${Number(d.split('-')[2])}</span>
-        <span class="mc-count">${n ? done + '/' + n : ''}</span>
-        ${dot}
-      </div>`;
-    }).join('');
-
-    let expandHtml = '';
-    if (hasSel) {
-      const d = App.timelineSelectedDate;
-      const list = dayTaskList(d);
-      const isT = d === Store.todayStr();
-      expandHtml = `
-        <div class="month-expand">
-          <div class="me-head"><span>${Store.fmtDOW(d)} · ${Store.fmtMD(d)}</span><button data-action="day:add" data-date="${d}">+</button></div>
-          <div class="me-list">
-            ${list.length ? list.map(t => timelineTaskItem(t, d)).join('') : `<div class="me-empty">这天还没有任务</div>`}
-          </div>
-          <button class="me-goto" data-action="today:date" data-date="${d}">${isT ? '进入今天' : '在今日页查看'}</button>
-        </div>`;
-    }
-
-    return `<div class="month-row">${cellsHtml}</div>${expandHtml}`;
-  }).join('');
-
-  const monthTotal = cells.filter(Boolean).reduce((s, d) => s + scheduledCount(d), 0);
-  const freeDays = cells.filter(Boolean).filter(d => scheduledCount(d) === 0).length;
-  const busyDay = cells.filter(Boolean).reduce((best, d) => { const n = scheduledCount(d); return n > best.n ? { d, n } : best; }, { d: '', n: 0 });
-
-  let advise = AI.copy('month_summary_light');
-  if (monthTotal >= 26) advise = AI.copy('month_summary_heavy');
-  else if (monthTotal >= 11) advise = AI.copy('month_summary_medium');
-  if (busyDay.n >= 5) advise += ' ' + AI.copy('month_busy_day', { date: busyDay.d ? Store.fmtMD(busyDay.d) : '', n: busyDay.n });
-  else if (busyDay.n === 0 && freeDays > 0) { /* 无最忙日 */ }
-  if (freeDays >= 3) {
-    const rel = cells.filter(Boolean).reduce((best, d) => {
-      const n = scheduledCount(d); return n < best.n ? { d, n } : best;
-    }, { d: busyDay.d, n: 99 });
-    if (rel.n <= 1 && rel.d) advise += ` ${Store.fmtMD(rel.d)}相对空闲，可以安排一些碎片任务。`;
-  }
-
-  const summary = `
-    <div class="focus-card month-summary-card">
-      <div class="fc-title">✏️ 本月总结</div>
-      <textarea class="fc-input" id="month-summary-input" placeholder="这个月过得怎么样？写几句话吧…" data-action="month:summary" data-month="${mk}">${esc(mn.summary)}</textarea>
-    </div>`;
-
-  return `
-    <div class="month-mode month-revised">
-      ${monthSelectorHtml(store, base)}
-      ${focusCard}
-      <div class="month-weekdays"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
-      <div class="month-grid">${gridRows}</div>
-      <div class="month-summary">
-        <div class="ms-total">本月总任务：<strong>${monthTotal}</strong> 件 · 最忙的一天：<strong>${busyDay.d ? Store.fmtMD(busyDay.d).replace('月','日') + '（' + busyDay.n + '件）' : '无'}</strong></div>
-        <div class="ms-advise">${advise || '节奏刚刚好，记得给自己留点空白。'}</div>
-      </div>
-      ${summary}
-    </div>`;
-}
-
-/* 待办池 */
-function renderPool(store) {
-  const items = store.backlog.length ? store.backlog.map(b => {
-    const tagDot = b.tag ? `<span class="tag-dot ${b.tag}"></span>` : '';
-    return `<div class="pool-item" draggable="true" data-action="pool:pick" data-id="${b.id}" data-from="backlog">
-      ${tagDot}
-      <span class="pool-check" data-action="backlog:to-today" data-id="${b.id}"></span>
-      <span class="pool-text">${esc(b.text)}</span>
-      <button class="pool-assign" data-action="pool:assign" data-id="${b.id}" data-from="backlog">安排</button>
-    </div>`;
-  }).join('') : '<div class="pool-empty">待办池空了，去灵感箱加点想法吧 ✨</div>';
-
-  return `
-    <div class="pool">
-      <div class="pool-title">📥 待办池 · 长按任务可拖拽到日期</div>
-      <div class="pool-list">${items}</div>
-    </div>`;
-}
-
-/* 单个任务项（时间轴用） */
-function timelineTaskItem(t, date) {
-  const tag = t.tag || '';
-  const tagDot = tag && AI.TAGS[tag] ? `<span class="tag-dot ${tag}" title="${AI.TAGS[tag].name}"></span>` : '';
-  const color = dowColorClass(date);
-  return `<div class="tl-task${t.done ? ' done' : ''}"${t.done ? '' : ' draggable="true"'} data-action="timeline:task" data-id="${t.id}" data-date="${date}">
-    <span class="tl-check ${color}" data-action="day:check" data-id="${t.id}" data-date="${date}">${t.done ? '✓' : ''}</span>
-    ${tagDot}<span class="tl-text">${esc(t.text)}</span>
-    <button class="tl-more" data-action="day:more" data-id="${t.id}" data-date="${date}">⋮</button>
-  </div>`;
-}
-
-/* 打开某一天的任务详情浮层（周/月视图通用） */
-function openDaySheet(date) {
-  const store = Store.load();
-  const list = dayTaskList(date);
-  const isT = date === Store.todayStr();
-  const title = isT ? `今天 · ${Store.fmtMD(date)}` : `${Store.fmtDOW(date)} · ${Store.fmtMD(date)}`;
-  const items = list.length ? list.map(t => {
-    const tag = t.tag || '';
-    const tagDot = tag && AI.TAGS[tag] ? `<span class="tag-dot ${tag}"></span>` : '';
-    return `<div class="ds-task${t.done ? ' done' : ''}">
-      <span class="ds-check" data-action="day:check" data-id="${t.id}" data-date="${date}">${t.done ? '✓' : ''}</span>
-      ${tagDot}<span class="ds-text">${esc(t.text)}</span>
-      <button class="ds-more" data-action="day:more" data-id="${t.id}" data-date="${date}">⋮</button>
-    </div>`;
-  }).join('') : `<div class="ds-empty">这天还没有安排任务<br><small>从下方待办池拖过来，或点 + 快速添加</small></div>`;
-
-  const actions = `
-    <div class="ds-actions">
-      <button class="btn-ghost" data-action="day:add" data-date="${date}">+ 快速添加</button>
-      ${isT ? `<button class="btn-primary" data-action="day:enter-today">进入今日执行</button>` : `<button class="btn-primary" data-action="today:date" data-date="${date}">在今日页查看</button>`}
-    </div>`;
-
-  openSheet(`
-    <div class="sheet day-sheet">
-      <div class="sheet-head">${title}<span class="ds-count">${list.filter(t => t.done).length}/${list.length}</span></div>
-      <div class="ds-list">${items}</div>
-      ${actions}
-      <button class="sheet-cancel" data-action="modal:close">关闭</button>
-    </div>`);
-}
 
 function getDayArr(date) {
   const store = Store.load();
@@ -1164,75 +710,13 @@ function getDayArr(date) {
   return store.dayTasks[date];
 }
 
-function dayCheck(date, id) {
-  const arr = getDayArr(date);
-  const t = arr.find(x => x.id === id);
-  if (!t) return;
-  t.done = !t.done;
-  if (t.done) {
-    const rec = Store.load().dayLog[date] || { done: 0, planned: Math.max(1, arr.length), mood: '😐' };
-    rec.done = (rec.done || 0) + 1;
-    Store.load().dayLog[date] = rec;
-  }
-  Store.save();
-  render();
-  // 如果弹层还在，刷新它
-  setTimeout(() => { if ($('.day-sheet')) openDaySheet(date); }, 0);
-}
 
-function dayDelete(date, id) {
-  const arr = getDayArr(date);
-  const idx = arr.findIndex(x => x.id === id);
-  if (idx < 0) return;
-  const t = arr[idx];
-  arr.splice(idx, 1);
-  Store.save();
-  render();
-  setTimeout(() => { if ($('.day-sheet')) openDaySheet(date); }, 0);
-  actionToast(`已删除"${t.text}"`, () => {
-    const st = Store.load();
-    const a = getDayArr(date);
-    a.splice(Math.min(idx, a.length), 0, t);
-    Store.save(); render();
-    setTimeout(() => { if ($('.day-sheet')) openDaySheet(date); }, 0);
-  });
-}
 
-function dayToBacklog(date, id) {
-  const arr = getDayArr(date);
-  const t = arr.find(x => x.id === id);
-  if (!t) return;
-  arr.splice(arr.indexOf(t), 1);
-  const store = Store.load();
-  store.backlog.unshift({ ...t, originalDate: Store.todayStr() });
-  Store.save();
-  render();
-  setTimeout(() => { if ($('.day-sheet')) openDaySheet(date); }, 0);
-  aiToast('task_moved_to_date', { task: t.text, date: '待办池' });
-}
 
-function dayAdd(date) {
-  const text = prompt(`给 ${Store.fmtMD(date)} 添加任务：`) || '';
-  if (!text.trim()) return;
-  const tag = AI.autoTag(text).tag || '';
-  const task = {
-    id: Store.uid(), text: text.trim(), estMin: 15, priority: false, done: false,
-    goalId: null, why: '', slot: '', matched: false, routeNote: '', tag
-  };
-  if (date === Store.todayStr()) {
-    task.slot = 'night';
-    task.matched = true;
-    Store.load().today.tasks.push(task);
-  } else {
-    Store.load().dayTasks = Store.load().dayTasks || {};
-    Store.load().dayTasks[date] = Store.load().dayTasks[date] || [];
-    Store.load().dayTasks[date].push(task);
-  }
-  if (tag) AI.recordTag(text, tag);
-  Store.save();
-  render();
-  setTimeout(() => { if ($('.day-sheet')) openDaySheet(date); }, 0);
-}
+
+
+
+
 
 function saveWeekFocus(wk) {
   const store = Store.load();
@@ -1390,10 +874,6 @@ function doMonthAutoDecompose(mk) {
   }
 
   Store.save();
-  // 跳到本周视图，让用户立刻看到结果
-  App.timelineView = 'week';
-  App.timelineDate = today;
-  App.timelineWeekSelectedDate = today;
   render();
   aiToast('month_auto_done', { task: top.text, weeks: 4 });
 }
@@ -1456,39 +936,24 @@ function moveToInbox(id, from, date) {
   render();
 }
 
-function openDayTaskMenu(date, id) {
-  const arr = getDayArr(date);
-  const t = arr.find(x => x.id === id);
-  if (!t) return;
-  openSheet(`
-    <div class="sheet">
-      <div class="sheet-head">${esc(t.text)}</div>
-      <div class="sheet-days" style="grid-template-columns:1fr 1fr">
-        <button class="sheet-day" data-action="timeline:task" data-id="${id}" data-date="${date}">查看详情</button>
-        <button class="sheet-day" data-action="day:to-backlog" data-id="${id}" data-date="${date}">移到待办池</button>
-        <button class="sheet-day" data-action="day:delete" data-id="${id}" data-date="${date}">删除</button>
-        <button class="sheet-day" data-action="modal:close">取消</button>
-      </div>
-    </div>`);
-}
+
 
 /* ================= 待办页 ================= */
 function renderBacklog() {
   const store = Store.load();
-  // 灵感箱（子弹笔记：先接住想法，稍后整理）
-  const inboxHtml = store.inbox.length ? store.inbox.map(item => {
-    const sug = AI.inboxSuggest(item.text);
+  // 灵感箱（= 待办池本身：想法写下来就是待办，不再分两层）
+  const inboxHtml = store.backlog.length ? store.backlog.map(item => {
+    const prio = item.priority ? '<span class="bolt" title="优先">⭐</span>' : '';
+    const tagDot = item.tag ? `<span class="tag-dot ${item.tag}" title="${AI.TAGS[item.tag] ? AI.TAGS[item.tag].name : ''}"></span>` : '';
     return `
       <div class="inbox-item">
-        <span class="inbox-text">${esc(item.text)}</span>
-        <div class="inbox-sug">${esc(sug.reason)}</div>
+        <span class="inbox-text">${tagDot}${esc(item.text)}${prio}</span>
         <div class="inbox-acts">
-          <button class="mini-btn ok" data-action="inbox:to-today" data-id="${item.id}">排进今日</button>
-          <button class="mini-btn" data-action="inbox:to-backlog" data-id="${item.id}">放待办</button>
-          <button class="mini-btn ghost" data-action="inbox:del" data-id="${item.id}">删除</button>
+          <button class="mini-btn ok" data-action="backlog:to-today" data-id="${item.id}">排进今日</button>
+          <button class="mini-btn ghost" data-action="backlog:del" data-id="${item.id}">删除</button>
         </div>
       </div>`;
-  }).join('') : '<div class="inbox-empty">想法存下后会自动收进下面的待办 ✨</div>';
+  }).join('') : '<div class="inbox-empty">还没有待办，上面写点什么吧 ✨</div>';
 
   // 灵感箱存入时的标签选择：AI 推荐 + 手动覆盖
   const recTag = App.inboxTagRec || (App.inboxTag ? AI.autoTag('').tag : '');
@@ -1612,7 +1077,7 @@ function inboxAdd(text) {
   App.inboxTagRec = '';
   Store.save();
   if (tag) aiToast('tag_saved', { task: txt, tag: AI.TAGS[tag] ? AI.TAGS[tag].name : '' });
-  else aiToast('inbox_captured');
+  else toast('已收进待办 ✨', { ai: true });
   render();
 }
 function inboxToToday(id) {
@@ -2429,9 +1894,33 @@ function openGoalDetail(id) {
       </div>`).join('')}
     <div class="modal-actions">
       <button class="btn-ghost" data-action="modal:close">知道了</button>
+      <button class="btn-primary" data-action="goal:to-backlog" data-id="${g.id}">📋 拆成待办</button>
       ${pct >= 100 ? `<button class="btn-primary" data-action="goal:archive" data-id="${g.id}">已达成，归档</button>` : ''}
     </div>`;
   openModal(modalShell(esc(g.title), '目标详情 · 完成任务即可点亮进度灯', body));
+}
+
+/* 目标 → 待办池：规则化拆解（不依赖外部AI），把目标步骤写入待办，并保留目标来源 */
+function goalToBacklog(id) {
+  const store = Store.load();
+  const g = store.goals.find(x => x.id === id);
+  if (!g) return;
+  let added = 0;
+  (g.tasks || []).forEach(t => {
+    if (store.backlog.some(b => b.goalId === g.id && b.text === t.text)) return;
+    const tag = t.tag || AI.autoTag(t.text).tag || '';
+    store.backlog.unshift({
+      id: Store.uid(), text: t.text, estMin: t.estMin || 15, priority: false,
+      originalDate: t.date || Store.todayStr(), why: t.why || '', tag,
+      goalId: g.id, fromGoal: true
+    });
+    added++;
+  });
+  store.flags.tabDots = { ...(store.flags.tabDots || {}), backlog: true };
+  Store.save();
+  closeModal();
+  render();
+  toast(added ? `已把 ${added} 个步骤收进待办 ✨` : '待办里已有该目标的步骤啦', { ai: true });
 }
 
 /* ================= OCR 拍照 ================= */
@@ -2524,6 +2013,545 @@ function copyText(text, okMsg) {
   }
 }
 
+/* ================= 日程 Tab ================= */
+function S() { return Store.load().schedule; }
+function schedAll() { return (S() && S().tasks) || []; }
+function catMeta(key) {
+  if (!key) return { name: '未分类', color: '#C9BFD6' };
+  if (AI.TAGS[key]) return AI.TAGS[key];
+  const sc = Store.load().schedule;
+  if (sc && sc.customCats) { const c = sc.customCats.find(x => x.key === key); if (c) return c; }
+  return { name: '未分类', color: '#C9BFD6' };
+}
+function schedCounts() {
+  const today = Store.todayStr();
+  const all = schedAll();
+  return {
+    overdue: all.filter(t => t.dueDate && t.dueDate < today && !t.isCompleted).length,
+    frag: all.filter(t => t.fragmentType === '碎片' && !t.isCompleted).length
+  };
+}
+function attrClass(f) { return ({ '碎片': 'frag', '顺路': 'way', '大块时间': 'focus', '依赖天气': 'weather' })[f] || ''; }
+function attrIcon(f) { return ({ '碎片': '⏳', '顺路': '🚶', '大块时间': '🧘', '依赖天气': '🌤️' })[f] || ''; }
+function prioClass(p) { return ({ '低': 'low', '中': 'mid', '高': 'high', '紧急': 'urgent' })[p] || 'mid'; }
+
+/* 时间块工具 */
+const SCHED_DAY_START = 7;
+const SCHED_DAY_END = 23;
+const SCHED_PX_PER_HOUR = 60;
+function timeToMin(t) { if (!t) return 0; const [h, m] = t.split(':').map(Number); return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m); }
+function minToTime(m) { const h = Math.floor(m / 60), mm = m % 60; return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; }
+function blockEnd(t) { return t.endTime ? timeToMin(t.endTime) : timeToMin(t.startTime) + (t.estMin || 30); }
+function blockStyle(t) {
+  const cat = catMeta(t.category);
+  const start = timeToMin(t.startTime);
+  const end = blockEnd(t);
+  const top = (start - SCHED_DAY_START * 60) / 60 * SCHED_PX_PER_HOUR;
+  const height = Math.max((end - start) / 60 * SCHED_PX_PER_HOUR, 22);
+  return `top:${top}px;height:${height}px;background:${cat.color};`;
+}
+function blockTimeLabel(t) {
+  const end = t.endTime || addMin(t.startTime, t.estMin || 30);
+  return `${t.startTime} – ${end}`;
+}
+function addMin(t, add) { return minToTime(timeToMin(t) + add); }
+
+/* 四象限 */
+function schedQuadrant(t) {
+  const today = Store.todayStr();
+  const imp = t.priority === '高' || t.priority === '紧急' || t.isWeekGoal;
+  const urg = t.priority === '紧急' || (t.dueDate && t.dueDate <= today);
+  if (imp && urg) return 'q1';
+  if (imp && !urg) return 'q2';
+  if (!imp && urg) return 'q3';
+  return 'q4';
+}
+function quadMeta(q) {
+  const map = {
+    q1: { name: '重要且紧急', color: '#FF9FA3', bg: 'rgba(255,159,163,.14)', border: 'rgba(255,159,163,.35)' },
+    q2: { name: '重要不紧急', color: '#7EB5F2', bg: 'rgba(126,181,242,.14)', border: 'rgba(126,181,242,.35)' },
+    q3: { name: '紧急不重要', color: '#FFD27A', bg: 'rgba(255,210,122,.14)', border: 'rgba(255,210,122,.45)' },
+    q4: { name: '不紧急不重要', color: '#A8E6CF', bg: 'rgba(168,230,207,.14)', border: 'rgba(168,230,207,.45)' }
+  };
+  return map[q] || map.q4;
+}
+function prioForQuadrant(q) { return { q1: '紧急', q2: '高', q3: '中', q4: '低' }[q] || '中'; }
+
+/* 按日期范围取出任务 */
+function schedScope() {
+  const today = Store.todayStr();
+  const all = schedAll();
+  const monday = Store.startOfWeek(today);
+  const week = Store.weekDates(today);
+  const wkSet = new Set(week);
+  const [y, m] = today.split('-').map(Number);
+  const monthEnd = Store.toYMD(new Date(y, m, 0));
+  const monthStart = today.slice(0, 7) + '-01';
+  return {
+    overdue: all.filter(t => t.dueDate && t.dueDate < today),
+    today: all.filter(t => t.dueDate === today),
+    week: all.filter(t => t.dueDate && wkSet.has(t.dueDate)),
+    month: all.filter(t => t.dueDate && t.dueDate >= monthStart && t.dueDate <= monthEnd),
+    frag: all.filter(t => t.fragmentType === '碎片')
+  };
+}
+function applySchedFilter(list) {
+  const c = App.schedFilter;
+  if (!c || c === 'all') return list;
+  if (c === 'inbox') return list.filter(t => t.source === 'inspiration_box');
+  if (c === 'allday') return list.filter(t => !t.startTime);
+  if (['q1', 'q2', 'q3', 'q4'].includes(c)) return list.filter(t => schedQuadrant(t) === c);
+  if (Object.prototype.hasOwnProperty.call(AI.TAGS, c)) return list.filter(t => t.category === c);
+  if (['碎片', '顺路', '大块时间', '依赖天气'].includes(c)) return list.filter(t => t.fragmentType === c);
+  const sc = Store.load().schedule;
+  if (sc && sc.customCats && sc.customCats.some(x => x.key === c)) return list.filter(t => t.category === c);
+  return list;
+}
+function catLabel(c) {
+  if (c === 'all' || !c) return '全部';
+  if (c === 'inbox') return '收集箱';
+  if (c === 'allday') return '全天任务';
+  if (c === 'q1') return '重要且紧急';
+  if (c === 'q2') return '重要不紧急';
+  if (c === 'q3') return '紧急不重要';
+  if (c === 'q4') return '不紧急不重要';
+  if (AI.TAGS[c]) return AI.TAGS[c].name;
+  if (['碎片', '顺路', '大块时间', '依赖天气'].includes(c)) return c;
+  const sc = Store.load().schedule;
+  if (sc && sc.customCats) { const x = sc.customCats.find(k => k.key === c); if (x) return x.name; }
+  return c;
+}
+function schedEmpty(kind) {
+  const map = {
+    day: ['🍃', '今天还没有安排，从侧栏拖一个任务到时间轴吧'],
+    week: ['🗓️', '本周还没有计划，从侧栏拖拽任务到某天'],
+    month: ['🗓️', '本月还没有安排'],
+    inbox: ['📥', '收集箱是空的，去「今日」页右下角快速捕捉想法吧'],
+    allday: ['☀️', '没有全天任务']
+  };
+  const [ic, txt] = map[kind] || ['🌱', '这里还是空的'];
+  return `<div class="sched-empty"><div class="se-ic">${ic}</div><div class="se-txt">${txt}</div></div>`;
+}
+
+/* —— 左侧导航抽屉：智能清单 / 标签 / 四象限 —— */
+function schedLeftNav() {
+  const store = Store.load();
+  const all = schedAll();
+  const today = Store.todayStr();
+  const sc = schedScope();
+  const cats = Object.keys(AI.TAGS).map(k => ({ key: k, ...AI.TAGS[k], n: all.filter(t => t.category === k && !t.isCompleted).length }));
+  const custom = (S().customCats || []).map(c => ({ ...c, n: all.filter(t => t.category === c.key && !t.isCompleted).length }));
+
+  const navItem = (key, icon, label, n, extra) =>
+    `<div class="ln-item ${App.schedLeftNav === key ? 'on' : ''}" data-action="sched:left-nav" data-nav="${key}" ${extra || ''}>
+      <span class="ln-ic">${icon}</span><span class="ln-label">${label}</span>${n != null ? `<span class="ln-n">${n}</span>` : ''}
+    </div>`;
+
+  const smart = [
+    navItem('inbox', '📥', '收集箱', inbox.length),
+    navItem('overdue', '⏰', '逾期', sc.overdue.length),
+    navItem('today', '⭐', '今天', sc.today.length),
+    navItem('week', '🗓️', '本周', sc.week.length),
+    navItem('month', '📆', '本月', sc.month.length)
+  ].join('');
+
+  const tags = [...cats, ...custom].map(c =>
+    `<div class="ln-item ${App.schedLeftNav === c.key ? 'on' : ''}" data-action="sched:left-nav" data-nav="${c.key}">
+      <span class="ln-dot" style="background:${c.color}"></span><span class="ln-label">${c.name}</span><span class="ln-n">${c.n}</span>
+    </div>`
+  ).join('');
+
+  return `<div class="sched-drawer-bg" data-action="sched:left"></div><aside class="sched-left-nav open">
+    <div class="ln-section">智能清单</div>
+    ${smart}
+    <div class="ln-section">标签</div>
+    <div class="ln-tags">${tags || '<div class="ln-empty">还没有标签</div>'}</div>
+  </aside>`;
+}
+
+/* —— 右侧收集箱抽屉：收集箱 / 全天任务 / 某标签 —— */
+function schedRightDrawer() {
+  const store = Store.load();
+  // 收集箱 = 待办池（灵感想法即待办），未完成且未安排日期的优先显示
+  const backlog = store.backlog || [];
+  const cats = Object.keys(AI.TAGS).map(k => ({ key: k, ...AI.TAGS[k] }));
+  const custom = (S().customCats || []).map(c => ({ ...c }));
+  const allCats = [...cats, ...custom];
+  const allDay = (store.schedule && store.schedule.tasks || []).filter(t => t.dueDate === App.schedDate && !t.startTime && !t.isCompleted);
+
+  // 待办池：可按左侧所选标签筛选
+  const tagFilter = App.schedFilter && App.schedFilter !== 'all' && allCats.some(c => c.key === App.schedFilter) ? App.schedFilter : '';
+  const pool = backlog.filter(b => !tagFilter || (b.tag || '') === tagFilter);
+
+  const poolHtml = pool.length
+    ? pool.map(it => {
+        const cm = it.tag ? catMeta(it.tag) : { color: 'var(--ink-2)', name: '未分类' };
+        const prio = it.priority ? '<span class="sb-prio">⭐</span>' : '';
+        return `<div class="sb-item" draggable="true" data-sid="${it.id}" data-from="backlog" data-action="sb:pick" data-action-menu="sb:menu">
+          <span class="sb-dot" style="background:${cm.color}"></span>
+          <span class="sb-text" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.text)}</span>
+          ${prio}<span class="sb-meta">${it.estMin || 15}分</span>
+        </div>`;
+      }).join('')
+    : '<div class="sb-empty">待办池是空的，去「待办」页捕捉想法吧</div>';
+
+  const alldayHtml = allDay.length
+    ? allDay.map(t => `<div class="sb-item" draggable="true" data-sid="${t.id}" data-from="allday" data-action="sb:pick">
+        <span class="sb-dot" style="background:${catMeta(t.category).color}"></span>
+        <span class="sb-text" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title)}</span>
+        <span class="sb-meta">${t.estMin}分</span>
+      </div>`).join('')
+    : '<div class="sb-empty">当天暂无全天任务</div>';
+
+  const tabs = [
+    { k: 'inbox', l: `待办池 ${pool.length ? `(${pool.length})` : ''}` },
+    { k: 'allday', l: '全天' }
+  ];
+  const tabBar = `<div class="sched-view-tabs" style="padding:0 0 10px">
+    ${tabs.map(x => `<button class="svt ${App.schedSidebarTab === x.k ? 'on' : ''}" data-action="sched:side-tab" data-tab="${x.k}">${x.l}</button>`).join('')}
+  </div>`;
+
+  let body = '';
+  if (App.schedSidebarTab === 'allday') body = `<div class="sb-list">${alldayHtml}</div>`;
+  else body = `<div class="sb-list">${poolHtml}</div><div class="sb-add" data-action="tab:switch" data-tab="backlog">＋ 去待办页捕捉想法</div>`;
+
+  return `<aside class="sched-right-drawer open">
+    ${tabBar}
+    <div class="sd-tip">从右侧拖到左侧安排日期 · 或长按</div>
+    ${body}
+  </aside>`;
+}
+
+/* —— 天视图：重点/总结 + 按标签分组 —— */
+function renderSchedDay() {
+  const date = App.schedDate || Store.todayStr();
+  const today = Store.todayStr();
+  const all = schedAll();
+  const list = applySchedFilter(all.filter(t => t.dueDate === date && !t.isCompleted));
+
+  const store = Store.load();
+  const hl = (store.dayHighlights && store.dayHighlights[date]) || [];
+  const focus = hl.map(h => h.text).join(' · ') || '还没有每日重点';
+  const summary = (store.dayLog && store.dayLog[date] && store.dayLog[date].note) || '每日总结会在这里显示';
+
+  const calHtml = App.schedCalOpen ? schedMiniCal() : '';
+
+  // 按标签分组（参考图风格）
+  const custom = (S().customCats || []).map(c => ({ ...c }));
+  const allCats = [...cats, ...custom];
+  const grouped = allCats.map(cat => {
+    const tasks = list.filter(t => t.category === cat.key);
+    if (!tasks.length) return '';
+    const items = tasks.map(t => `<div class="dq-task ${t.isCompleted ? 'done' : ''}" draggable="true" data-sid="${t.id}" data-from="day" data-action="sb:pick" data-action-menu="sb:menu">
+        <span class="dq-dot" style="background:${cat.color}"></span>
+        <span class="dq-title">${esc(t.title)}</span>
+        <span class="dq-min">${t.estMin}分</span>
+      </div>`).join('');
+    return `<div class="day-group">
+      <div class="dg-head"><span class="dg-dot" style="background:${cat.color}"></span>${cat.name}<span class="dg-n">${tasks.length}</span></div>
+      <div class="dg-body">${items}</div>
+    </div>`;
+  }).join('');
+  const ungrouped = list.filter(t => !allCats.some(c => c.key === t.category));
+  const ungroupedHtml = ungrouped.length ? `<div class="day-group">
+      <div class="dg-head"><span class="dg-dot" style="background:var(--ink-2)"></span>未分类<span class="dg-n">${ungrouped.length}</span></div>
+      <div class="dg-body">${ungrouped.map(t => `<div class="dq-task ${t.isCompleted ? 'done' : ''}" draggable="true" data-sid="${t.id}" data-from="day" data-action="sb:pick" data-action-menu="sb:menu">
+        <span class="dq-dot" style="background:var(--ink-2)"></span>
+        <span class="dq-title">${esc(t.title)}</span>
+        <span class="dq-min">${t.estMin}分</span>
+      </div>`).join('')}</div>
+    </div>` : '';
+
+  return `<div class="day-view">
+    <div class="day-header">
+      <div class="day-date-wrap" data-action="sched:cal"><h3>${Store.fmtMD(date)}</h3><div class="day-sub">${date === today ? '今天 · ' : ''}${Store.fmtDOW(date)}</div><span class="day-caret ${App.schedCalOpen ? 'up' : ''}">▾</span></div>
+      <div class="sched-tools">
+        <button class="icon-btn" data-action="sched:prev-day">‹</button>
+        <button class="icon-btn" data-action="sched:today">今天</button>
+        <button class="icon-btn" data-action="sched:next-day">›</button>
+      </div>
+    </div>
+    ${calHtml}
+    <div class="day-summary-row">
+      <div class="day-summary-card"><b>每日重点</b>${esc(focus)}</div>
+      <div class="day-summary-card"><b>每日总结</b>${esc(summary)}</div>
+    </div>
+    <div class="day-tags">${grouped || schedEmpty('day')}${ungroupedHtml}</div>
+  </div>`;
+}
+
+/* —— 周视图 —— */
+function renderSchedWeek() {
+  const start = App.schedWeekStart || Store.startOfWeek(Store.todayStr());
+  const week = Store.weekDates(start);
+  const today = Store.todayStr();
+  const all = schedAll();
+  const dows = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+  const wn = Store.weekNumber(start);
+  const store = Store.load();
+  store.weekNotes = store.weekNotes || {};
+  const n = store.weekNotes[start] || { focus: '', summary: '', items: [] };
+  const focusText = (n.items && n.items.length) ? n.items.map(it => it.text || it).join(' · ') : '还没有本周重点';
+  const summaryText = n.summary || '写几句本周总结…';
+
+  const cols = week.map((d, i) => {
+    const isToday = d === today;
+    const list = applySchedFilter(all.filter(t => t.dueDate === d && !t.isCompleted))
+      .sort((a, b) => (a.startTime ? timeToMin(a.startTime) : 9999) - (b.startTime ? timeToMin(b.startTime) : 9999));
+    const tasks = list.map(t => {
+      const time = t.startTime ? `<div class="wc-time">${t.startTime}${t.endTime ? '–' + t.endTime : ''}</div>` : '';
+      return `<div class="wc-task ${t.isCompleted ? 'done' : ''}" draggable="true" data-sid="${t.id}" data-from="week" data-action="sched:detail" data-id="${t.id}">
+        ${time}<div class="wc-title">${esc(t.title)}</div>
+        <span class="wc-dot" style="background:${catMeta(t.category).color}"></span>
+      </div>`;
+    }).join('');
+    return `<div class="week-col ${isToday ? 'today' : ''}" data-date="${d}" data-action="sched:drop-day">
+      <div class="wc-head"><div class="wc-d">${Number(d.split('-')[2])}</div><div class="wc-w">${dows[i]}</div></div>
+      <div class="wc-body" data-date="${d}" data-action="sched:drop-day">${list.length ? tasks : '<div class="wc-empty">空</div>'}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="week-view">
+    <div class="week-header">
+      <div><h3>W${wn}，本周</h3></div>
+      <div class="week-nav">
+        <button data-action="sched:prev-week">‹</button>
+        <button data-action="sched:this-week">本周</button>
+        <button data-action="sched:next-week">›</button>
+      </div>
+    </div>
+    <div class="week-summary-row">
+      <button class="week-summary-card ${App.schedFocusTab === 'focus' ? 'on' : ''}" data-action="sched:focus-tab" data-tab="focus">
+        <b>本周重点</b><span>${esc(focusText)}</span>
+      </button>
+      <button class="week-summary-card ${App.schedFocusTab === 'summary' ? 'on' : ''}" data-action="sched:focus-tab" data-tab="summary">
+        <b>本周总结</b><span>${esc(summaryText)}</span>
+      </button>
+    </div>
+    ${App.schedFocusTab === 'focus' ? renderWeekFocus() : renderWeekSummary()}
+    <div class="week-grid">${cols}</div>
+  </div>`;
+}
+
+/* —— 月视图 —— */
+function renderSchedMonth() {
+  const base = App.schedDate || Store.todayStr();
+  const [y, m] = base.split('-').map(Number);
+  const first = new Date(y, m - 1, 1);
+  const startDow = (first.getDay() + 6) % 7;
+  const days = Store.monthDays(y, m);
+  const today = Store.todayStr();
+  const all = schedAll();
+  const prevEnd = new Date(y, m - 1, 0).getDate();
+  const store = Store.load();
+  store.monthNotes = store.monthNotes || {};
+  const key = Store.monthKey(base);
+  const n = store.monthNotes[key] || { focus: '', summary: '', items: [] };
+  const focusText = (n.items && n.items.length) ? n.items.map(it => it.text || it).join(' · ') : '还没有本月重点';
+  const summaryText = n.summary || '写几句本月总结…';
+  const cells = [];
+
+  for (let i = 0; i < startDow; i++) {
+    const d = prevEnd - startDow + i + 1;
+    cells.push(`<div class="month-cell other"><div class="mc-num">${d}</div></div>`);
+  }
+  for (let d = 1; d <= days; d++) {
+    const ymd = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const list = applySchedFilter(all.filter(t => t.dueDate === ymd && !t.isCompleted));
+    const bars = list.slice(0, 4).map(t => `<div class="mc-bar" style="background:${catMeta(t.category).color}">${esc(t.title)}</div>`).join('');
+    const more = list.length > 4 ? `<div class="mc-more">+${list.length - 4} 更多</div>` : '';
+    const isToday = ymd === today;
+    const isSel = ymd === App.schedDate;
+    cells.push(`<div class="month-cell ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''}" data-date="${ymd}" data-action="sched:drop-day">
+      <div class="mc-num">${d}</div>
+      <div class="mc-bars">${bars}${more}</div>
+    </div>`);
+  }
+  const rest = (7 - ((startDow + days) % 7)) % 7;
+  for (let i = 1; i <= rest; i++) cells.push(`<div class="month-cell other"><div class="mc-num">${i}</div></div>`);
+
+  return `<div class="month-view">
+    <div class="month-header">
+      <h3>${y}年${m}月</h3>
+      <div class="week-nav">
+        <button data-action="sched:prev-month">‹</button>
+        <button data-action="sched:this-month">本月</button>
+        <button data-action="sched:next-month">›</button>
+      </div>
+    </div>
+    <div class="week-summary-row">
+      <button class="week-summary-card ${App.schedFocusTab === 'focus' ? 'on' : ''}" data-action="sched:focus-tab" data-tab="focus">
+        <b>本月重点</b><span>${esc(focusText)}</span>
+      </button>
+      <button class="week-summary-card ${App.schedFocusTab === 'summary' ? 'on' : ''}" data-action="sched:focus-tab" data-tab="summary">
+        <b>本月总结</b><span>${esc(summaryText)}</span>
+      </button>
+    </div>
+    ${App.schedFocusTab === 'focus' ? renderMonthFocus() : renderMonthSummary()}
+    <div class="month-grid">${cells.join('')}</div>
+  </div>`;
+}
+
+function renderWeekFocus() {
+  const monday = App.schedWeekStart || Store.startOfWeek(Store.todayStr());
+  const store = Store.load(); store.weekNotes = store.weekNotes || {};
+  const n = store.weekNotes[monday] || { focus: '', summary: '', items: [] };
+  const items = n.items || [];
+  return `<div class="sched-focus-box">
+    <div class="sf-title">本周重点</div>
+    ${items.length ? items.map((it, i) => `<div class="sf-item">• ${esc(it.text || it)} <button class="sf-x" data-action="sched:focus-del" data-i="${i}">×</button></div>`).join('') : '<div class="sf-empty">还没有标记的重点</div>'}
+    <div class="sf-add"><input class="input" id="sched-focus-input" placeholder="添加一件本周重点…"><button class="btn" data-action="sched:focus-add">添加</button></div>
+  </div>`;
+}
+function renderWeekSummary() {
+  const monday = App.schedWeekStart || Store.startOfWeek(Store.todayStr());
+  const sc = schedScope();
+  const total = sc.week.length;
+  const done = sc.week.filter(t => t.isCompleted).length;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const store = Store.load(); store.weekNotes = store.weekNotes || {};
+  const n = store.weekNotes[monday] || { focus: '', summary: '', items: [] };
+  return `<div class="sched-focus-box">
+    <div class="sf-ring" style="--pct:${pct}"><span>${pct}%</span></div>
+    <div class="sf-stat">本周共 ${total} 件 · 已完成 ${done} 件 · 完成率 ${pct}%</div>
+    <div class="sf-title">本周总结</div>
+    <textarea class="input sf-summary" id="sched-summary-input" data-action="sched:summary" data-week="${monday}" placeholder="写几句本周的感受与复盘…">${esc(n.summary || '')}</textarea>
+  </div>`;
+}
+function renderMonthFocus() {
+  const key = Store.monthKey(App.schedDate || Store.todayStr());
+  const store = Store.load(); store.monthNotes = store.monthNotes || {};
+  const n = store.monthNotes[key] || { focus: '', summary: '', items: [] };
+  const items = n.items || [];
+  return `<div class="sched-focus-box">
+    <div class="sf-title">本月重点</div>
+    ${items.length ? items.map((it, i) => `<div class="sf-item">• ${esc(it.text || it)} <button class="sf-x" data-action="sched:month-focus-del" data-i="${i}">×</button></div>`).join('') : '<div class="sf-empty">还没有标记的重点</div>'}
+    <div class="sf-add"><input class="input" id="sched-month-focus-input" placeholder="添加一件本月重点…"><button class="btn" data-action="sched:month-focus-add">添加</button></div>
+  </div>`;
+}
+function renderMonthSummary() {
+  const key = Store.monthKey(App.schedDate || Store.todayStr());
+  const sc = schedScope();
+  const total = sc.month.length;
+  const done = sc.month.filter(t => t.isCompleted).length;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const store = Store.load(); store.monthNotes = store.monthNotes || {};
+  const n = store.monthNotes[key] || { focus: '', summary: '', items: [] };
+  return `<div class="sched-focus-box">
+    <div class="sf-ring" style="--pct:${pct}"><span>${pct}%</span></div>
+    <div class="sf-stat">本月共 ${total} 件 · 已完成 ${done} 件 · 完成率 ${pct}%</div>
+    <div class="sf-title">本月总结</div>
+    <textarea class="input sf-summary" id="sched-month-summary-input" data-action="sched:month-summary" data-month="${key}" placeholder="写几句本月的感受与复盘…">${esc(n.summary || '')}</textarea>
+  </div>`;
+}
+
+/* —— 横向日期条：根据视图显示 今天 / 本周 / 本月 —— */
+function schedDateBarCells() {
+  const today = Store.todayStr();
+  const view = App.schedView;
+  const dows = ['一', '二', '三', '四', '五', '六', '日'];
+  if (view === 'week') {
+    const start = App.schedWeekStart || Store.startOfWeek(Store.todayStr());
+    const week = Store.weekDates(start);
+    return week.map((d, i) => `<div class="sdb-cell ${d === today ? 'today' : ''} ${d === App.schedDate ? 'sel' : ''}" data-action="sched:dbar-cell" data-date="${d}">
+      <span class="sdb-d">${Number(d.split('-')[2])}</span><span class="sdb-w">${dows[i]}</span></div>`).join('');
+  }
+  if (view === 'month') {
+    const base = App.schedDate || Store.todayStr();
+    const [y, m] = base.split('-').map(Number);
+    const days = Store.monthDays(y, m);
+    let out = '';
+    for (let d = 1; d <= days; d++) {
+      const ymd = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      out += `<div class="sdb-cell ${ymd === today ? 'today' : ''} ${ymd === App.schedDate ? 'sel' : ''}" data-action="sched:dbar-cell" data-date="${ymd}">
+        <span class="sdb-d">${d}</span></div>`;
+    }
+    return out;
+  }
+  // day 视图：显示当月日期（滚动定位到今天）
+  const base = App.schedDate || Store.todayStr();
+  const [y, m] = base.split('-').map(Number);
+  const days = Store.monthDays(y, m);
+  let out = '';
+  for (let d = 1; d <= days; d++) {
+    const ymd = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    out += `<div class="sdb-cell ${ymd === today ? 'today' : ''} ${ymd === App.schedDate ? 'sel' : ''}" data-action="sched:dbar-cell" data-date="${ymd}">
+      <span class="sdb-d">${d}</span></div>`;
+  }
+  return out;
+}
+
+/* —— 视图分发 —— */
+function renderSchedView() {
+  if (App.schedView === 'week') return renderSchedWeek();
+  if (App.schedView === 'month') return renderSchedMonth();
+  return renderSchedDay();
+}
+
+/* —— 主框架：三栏布局（左导航 / 主视图 / 右收集箱） —— */
+function renderSchedule() {
+  return `
+  <div class="sched">
+    <div class="sched-topbar">
+      <button class="icon-btn sched-left-btn" data-action="sched:left" title="导航">☰</button>
+      <button class="sched-date" data-action="sched:cal">${Store.fmtMD(App.schedDate)} · ${Store.fmtDOW(App.schedDate)} <span class="caret">▾</span></button>
+      <div class="sched-tools">
+        <button class="icon-btn sched-right-btn" data-action="sched:right" title="收集箱">📥</button>
+      </div>
+    </div>
+    ${App.schedCalOpen ? schedMiniCal() : ''}
+    <div class="sched-datebar">
+      <button class="sdb-prev" data-action="sched:dbar-prev">‹</button>
+      <div class="sdb-track">
+        ${schedDateBarCells()}
+      </div>
+      <button class="sdb-next" data-action="sched:dbar-next">›</button>
+    </div>
+    <div class="sched-body">
+      ${App.schedLeftOpen ? schedLeftNav() : ''}
+      <div class="sched-main">
+        ${renderSchedView()}
+      </div>
+      ${App.schedRightOpen ? schedRightDrawer() : ''}
+    </div>
+    <button class="sched-fab" data-action="sched:new" title="新建任务">＋</button>
+  </div>`;
+}
+function schedLinkBanner() {
+  const today = Store.todayStr();
+  const list = schedAll().filter(t => t.dueDate === today && !t.isCompleted);
+  if (!list.length) return '';
+  return `<button class="sched-link-card" data-action="tab:switch" data-tab="schedule">📅 今日还有 <b>${list.length}</b> 件在「日程」里 · 去安排 →</button>`;
+}
+
+/* —— 顶部迷你月历 —— */
+function schedMiniCal() {
+  const base = App.schedDate || Store.todayStr();
+  const [y, m] = base.split('-').map(Number);
+  const first = new Date(y, m - 1, 1);
+  const startDow = (first.getDay() + 6) % 7;
+  const days = Store.monthDays(y, m);
+  const today = Store.todayStr();
+  const all = schedAll();
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push('<div class="mini-cell empty"></div>');
+  for (let d = 1; d <= days; d++) {
+    const ymd = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dayTasks = all.filter(t => t.dueDate === ymd && !t.isCompleted);
+    const dots = dayTasks.slice(0, 3).map(t => `<span class="cd" style="background:${catMeta(t.category).color}"></span>`).join('');
+    const plus = dayTasks.length > 3 ? '<span class="cd plus">+</span>' : '';
+    cells.push(`<div class="mini-cell${ymd === today ? ' cur' : ''}${ymd === App.schedDate ? ' sel' : ''}${dayTasks.length ? ' has' : ''}" data-action="sched:cal-date" data-date="${ymd}"><span class="mc-d">${d}</span><span class="mc-dots">${dots}${plus}</span></div>`);
+  }
+  return `<div class="sched-cal">
+    <div class="sched-cal-head"><span>${y}年${m}月</span>
+      <button class="mini-month" data-action="sched:cal-prev">‹</button>
+      <button class="mini-month" data-action="sched:cal-next">›</button>
+    </div>
+    <div class="sched-cal-grid">${['一', '二', '三', '四', '五', '六', '日'].map(w => `<div class="mc-w">${w}</div>`).join('')}${cells.join('')}</div>
+    <div class="sched-cal-foot"><button class="btn-ghost" data-action="sched:cal-today">今天</button><button class="btn-ghost" data-action="sched:cal-close">清除</button></div>
+  </div>`;
+}
+
 /* ================= 事件绑定 ================= */
 function bindEvents() {
   document.addEventListener('click', onClick);
@@ -2591,6 +2619,12 @@ function bindEvents() {
     }
     if (e.target && e.target.id === 'today-summary-input') {
       saveTodaySummary(e.target.dataset.date);
+    }
+    if (e.target && e.target.id === 'sched-summary-input') {
+      schedSummarySave(e.target.dataset.week, e.target.value);
+    }
+    if (e.target && e.target.id === 'sched-month-summary-input') {
+      schedMonthSummarySave(e.target.dataset.month, e.target.value);
     }
   });
 
@@ -2725,7 +2759,6 @@ function bindEvents() {
       document.querySelectorAll('.day-col.drop-hot, .month-cell.drop-hot, .mini-cell.drop-hot').forEach(c => c.classList.remove('drop-hot'));
       const c = AI.dragConflict(date, 1);
       if (c && c.level === 'block') { toast('这天已经排满了，换一天吧。', { ai: true }); _dragPoolId = null; _dragPoolFrom = ''; _dragTlId = null; _dragTlDate = ''; _dragTlFrom = ''; _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = ''; return; }
-      App.timelineSelectedDate = date;
       App.todayViewDate = date;
       if (isBox && from === 'inbox') {
         // 灵感箱项直接安排到该日：转为正式任务
@@ -2764,6 +2797,9 @@ function bindEvents() {
     _dragBoxId = null; _dragBoxFrom = ''; _dragBoxDate = ''; _dragBoxTag = '';
   });
 
+  // 日程 Tab 拖拽调度
+  bindScheduleDrag();
+
   // 深色模式跟随系统
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     const store = Store.load();
@@ -2782,13 +2818,11 @@ let touchTarget = null;
 let touchStartX = 0;
 let touchStartY = 0;
 let swipeMoved = false;
-let timelineSwipeStart = false;
 function onTouchStart(e) {
   const el = e.target.closest('.task');
   touchStartX = e.touches ? e.touches[0].clientX : 0;
   touchStartY = e.touches ? e.touches[0].clientY : 0;
   swipeMoved = false;
-  timelineSwipeStart = !el && !!e.target.closest('.timeline-page');
   // 点击已滑开卡片的非按钮区域：先收回，不触发详情
   if (el && el.classList.contains('swiped')) {
     if (e.target.closest('.swipe-acts')) { touchTarget = el; return; }
@@ -2835,36 +2869,6 @@ function onTouchEnd(e) {
   }
   touchTarget = null;
   swipeMoved = false;
-
-  // 时间轴页面左右滑动翻页
-  if (timelineSwipeStart && e.changedTouches && e.changedTouches[0]) {
-    const dx = e.changedTouches[0].clientX - touchStartX;
-    const dy = e.changedTouches[0].clientY - touchStartY;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      const dir = dx < 0 ? 1 : -1;
-      if (App.timelineView === 'today') {
-        const base = App.todayViewDate || Store.todayStr();
-        if (App.todayCalOpen) {
-          const d = new Date(base + 'T00:00:00');
-          d.setMonth(d.getMonth() + dir);
-          App.todayViewDate = Store.toYMD(d);
-        } else {
-          App.todayViewDate = Store.shiftDate(Store.startOfWeek(base), dir * 7);
-        }
-      } else {
-        const base = App.timelineDate || Store.todayStr();
-        if (App.timelineView === 'month') {
-          const d = new Date(base + 'T00:00:00');
-          d.setMonth(d.getMonth() + dir);
-          App.timelineDate = Store.toYMD(d);
-        } else {
-          App.timelineDate = Store.shiftDate(Store.startOfWeek(base), dir * 7);
-        }
-      }
-      render();
-    }
-  }
-  timelineSwipeStart = false;
 }
 
 function onClick(e) {
@@ -2918,6 +2922,7 @@ function onClick(e) {
     case 'goal:decompose': doDecompose($('#goal-input').value); break;
     case 'goal:confirm': confirmGoal(); break;
     case 'goal:detail': openGoalDetail(id); break;
+    case 'goal:to-backlog': goalToBacklog(id); break;
     case 'goal:task': toggleGoalTask(btn.dataset.tid); break;
     case 'goal:archive': archiveGoal(id); break;
     case 'goal:keep': keepGoal(id); break;
@@ -2949,10 +2954,99 @@ function onClick(e) {
     case 'task:adjust-slot': adjustSlot(id); break;
     case 'slot:pick': pickSlot(btn.dataset.id, btn.dataset.slot); break;
     case 'inbox:to-today': inboxToToday(id); break;
-    case 'inbox:to-backlog': inboxToBacklog(id); break;
+    case 'inbox:to-backlog': toast('想法已在待办里啦 ✨', { ai: true }); break;
     case 'inbox:del': inboxDel(id); break;
     case 'inbox:copy': inboxCopy(id); break;
     case 'inbox:focus': focusInbox(); break;
+    /* —— 日程 Tab —— */
+    case 'sched:cal': App.schedCalOpen = !App.schedCalOpen; render(); break;
+    case 'sched:cal-date': App.schedDate = btn.dataset.date || Store.todayStr(); App.schedWeekStart = Store.startOfWeek(App.schedDate); App.schedCalOpen = false; render(); break;
+    case 'sched:cal-prev': { const d = new Date((App.schedDate || Store.todayStr()) + 'T00:00:00'); d.setMonth(d.getMonth() - 1); App.schedDate = Store.toYMD(d); App.schedWeekStart = Store.startOfWeek(App.schedDate); render(); break; }
+    case 'sched:cal-next': { const d = new Date((App.schedDate || Store.todayStr()) + 'T00:00:00'); d.setMonth(d.getMonth() + 1); App.schedDate = Store.toYMD(d); App.schedWeekStart = Store.startOfWeek(App.schedDate); render(); break; }
+    case 'sched:cal-today': App.schedDate = Store.todayStr(); App.schedWeekStart = Store.startOfWeek(App.schedDate); App.schedCalOpen = false; render(); break;
+    case 'sched:cal-close': App.schedCalOpen = false; render(); break;
+    case 'sched:left': App.schedLeftOpen = !App.schedLeftOpen; render(); break;
+    case 'sched:right': App.schedRightOpen = !App.schedRightOpen; render(); break;
+    case 'sched:left-nav': {
+      const nav = btn.dataset.nav;
+      App.schedLeftNav = nav;
+      // 智能清单 → 切换视图 + 过滤
+      if (nav === 'inbox') { App.schedFilter = (App.schedSidebarTab === 'inbox') ? 'all' : 'all'; App.schedSidebarTab = 'inbox'; App.schedRightOpen = true; }
+      else if (nav === 'overdue') { App.schedFilter = 'overdue'; App.schedView = 'day'; }
+      else if (nav === 'today') { App.schedFilter = 'all'; App.schedView = 'day'; App.schedDate = Store.todayStr(); }
+      else if (nav === 'week') { App.schedFilter = 'all'; App.schedView = 'week'; }
+      else if (nav === 'month') { App.schedFilter = 'all'; App.schedView = 'month'; }
+      else { App.schedFilter = nav; App.schedSidebarTab = 'tag'; App.schedRightOpen = true; }
+      if (window.innerWidth < 760) App.schedLeftOpen = false;
+      render(); break;
+    }
+    case 'sched:side-tab': App.schedSidebarTab = btn.dataset.tab || 'inbox'; render(); break;
+    case 'sb:menu': openSchedItemMenu(id); break;
+    case 'sched:menu-today': closeSheet(); schedMenuApply(id, Store.todayStr()); break;
+    case 'sched:menu-week': closeSheet(); { const ws = Store.startOfWeek(App.schedDate || Store.todayStr()); schedMenuApply(id, ws); break; }
+    case 'sched:menu-date': { App._menuId = id; App.schedForm = null; openSchedDatePicker('menu', id); break; }
+    case 'sched:menu-keep': closeSheet(); render(); break;
+    case 'sched:menu-edit': closeSheet(); openSchedEdit(id); break;
+    case 'sched:menu-del': closeSheet(); schedDelete(id); break;
+    case 'sched:filter': {
+      const f = btn.dataset.filter;
+      App.schedFilter = (App.schedFilter === f) ? '' : f;
+      render(); break;
+    }
+    case 'sched:day-cell': App.schedDate = btn.dataset.date || Store.todayStr(); App.schedWeekStart = Store.startOfWeek(App.schedDate); App.schedView = 'day'; render(); break;
+    case 'sched:dbar-cell': App.schedDate = btn.dataset.date || Store.todayStr(); App.schedWeekStart = Store.startOfWeek(App.schedDate); App.schedView = (App.schedView === 'week' || App.schedView === 'month') ? App.schedView : 'day'; render(); break;
+    case 'sched:dbar-prev': {
+      if (App.schedView === 'week') { App.schedWeekStart = Store.shiftDate(App.schedWeekStart || Store.startOfWeek(Store.todayStr()), -7); App.schedDate = App.schedWeekStart; }
+      else if (App.schedView === 'month') { const d = new Date((App.schedDate || Store.todayStr()) + 'T00:00:00'); d.setMonth(d.getMonth() - 1); App.schedDate = Store.toYMD(d); }
+      else { App.schedDate = Store.shiftDate(App.schedDate || Store.todayStr(), -1); App.schedWeekStart = Store.startOfWeek(App.schedDate); }
+      render(); break;
+    }
+    case 'sched:dbar-next': {
+      if (App.schedView === 'week') { App.schedWeekStart = Store.shiftDate(App.schedWeekStart || Store.startOfWeek(Store.todayStr()), 7); App.schedDate = App.schedWeekStart; }
+      else if (App.schedView === 'month') { const d = new Date((App.schedDate || Store.todayStr()) + 'T00:00:00'); d.setMonth(d.getMonth() + 1); App.schedDate = Store.toYMD(d); }
+      else { App.schedDate = Store.shiftDate(App.schedDate || Store.todayStr(), 1); App.schedWeekStart = Store.startOfWeek(App.schedDate); }
+      render(); break;
+    }
+    case 'sched:prev-day': { App.schedDate = Store.shiftDate(App.schedDate || Store.todayStr(), -1); App.schedWeekStart = Store.startOfWeek(App.schedDate); render(); break; }
+    case 'sched:next-day': { App.schedDate = Store.shiftDate(App.schedDate || Store.todayStr(), 1); App.schedWeekStart = Store.startOfWeek(App.schedDate); render(); break; }
+    case 'sched:today': App.schedDate = Store.todayStr(); App.schedWeekStart = Store.startOfWeek(App.schedDate); render(); break;
+    case 'sched:prev-week': { App.schedWeekStart = Store.shiftDate(App.schedWeekStart || Store.startOfWeek(Store.todayStr()), -7); App.schedDate = App.schedWeekStart; render(); break; }
+    case 'sched:next-week': { App.schedWeekStart = Store.shiftDate(App.schedWeekStart || Store.startOfWeek(Store.todayStr()), 7); App.schedDate = App.schedWeekStart; render(); break; }
+    case 'sched:this-week': App.schedWeekStart = Store.startOfWeek(Store.todayStr()); App.schedDate = Store.todayStr(); render(); break;
+    case 'sched:prev-month': { const d = new Date((App.schedDate || Store.todayStr()) + 'T00:00:00'); d.setMonth(d.getMonth() - 1); App.schedDate = Store.toYMD(d); App.schedWeekStart = Store.startOfWeek(App.schedDate); render(); break; }
+    case 'sched:next-month': { const d = new Date((App.schedDate || Store.todayStr()) + 'T00:00:00'); d.setMonth(d.getMonth() + 1); App.schedDate = Store.toYMD(d); App.schedWeekStart = Store.startOfWeek(App.schedDate); render(); break; }
+    case 'sched:this-month': App.schedDate = Store.todayStr(); App.schedWeekStart = Store.startOfWeek(App.schedDate); render(); break;
+    case 'sched:drop-slot': assignTaskToSlot(_dragSchedId, btn.dataset.date, btn.dataset.time); break;
+    case 'sched:drop-day': assignTaskToDay(_dragSchedId, btn.dataset.date); break;
+    case 'sched:drop-quad': assignTaskToQuadrant(_dragSchedId, btn.dataset.date, btn.dataset.quad); break;
+    case 'sched:detail': openSchedDetail(id); break;
+    case 'sched:check': schedCheck(id); break;
+    case 'sched:new': openSchedNew(); break;
+    case 'sched:save': saveSchedTask(); break;
+    case 'sched:edit': openSchedEdit(id); break;
+    case 'sched:save-edit': saveSchedEdit(); break;
+    case 'sched:del': schedDelete(id); break;
+    case 'sched:date': openSchedDatePicker('task', id); break;
+    case 'sched:pick-date': openSchedDatePicker('form'); break;
+    case 'sched:set-date': applySchedDate(btn.dataset.date || ''); break;
+    case 'sched:goal-toggle': schedToggleGoal(id); break;
+    case 'sched:goal-remove': schedGoalRemove(id); break;
+    case 'sched:goal-edit': toast('拖拽任务到上方虚线框即可设为周目标 🎯'); break;
+    case 'sched:focus-tab': App.schedFocusTab = btn.dataset.tab || 'focus'; render(); break;
+    case 'sched:focus-add': schedFocusAdd(); break;
+    case 'sched:focus-del': schedFocusDel(btn.dataset.i); break;
+    case 'sched:month-focus-add': schedMonthFocusAdd(); break;
+    case 'sched:month-focus-del': schedMonthFocusDel(btn.dataset.i); break;
+    case 'sched:add-day': { App.schedForm = App.schedForm || {}; App.schedForm.dueDate = btn.dataset.date; openSchedNew(); break; }
+    case 'sched:inbox-capture': openInboxCapture(); break;
+    case 'sched:cat-new': openSchedNewCat(); break;
+    case 'sched:cat-save': saveSchedCat(); break;
+    case 'sched:cat-del': schedCatDelete(btn.dataset.cat); break;
+    case 'sched:search': toast('搜索即将上线 🔍', { ai: true }); break;
+    case 'sched:more': toast('更多设置敬请期待 ✨', { ai: true }); break;
+    case 'sb:pick': break; // 仅用于拖拽识别
+    case 'sb:capture-save': saveSbCapture(); break;
+    case 'inbox:to-schedule': inboxToSchedule(id); break;
     case 'inbox:tag': {
       const t = btn.dataset.tag;
       if (App.inboxTag === t) { App.inboxTag = ''; App.inboxTagRec = ''; }
@@ -2975,45 +3069,10 @@ function onClick(e) {
       render();
       break;
     }
-    case 'timeline:view': App.timelineView = btn.dataset.view || 'week'; render(); break;
     case 'cal:toggle': App.todayCalOpen = !App.todayCalOpen; render(); break;
     case 'cal:date': {
       App.todayViewDate = btn.dataset.date || Store.todayStr();
       App.todayCalOpen = false;
-      render();
-      break;
-    }
-    case 'cal:week': App.timelineWeekSelect = !App.timelineWeekSelect; render(); break;
-    case 'week:select': {
-      const wk = btn.dataset.week, base = btn.dataset.base;
-      App.timelineDate = base || Store.todayStr();
-      App.timelineWeekSelect = false;
-      App.timelineWeekSelectedDate = '';
-      render();
-      break;
-    }
-    case 'week:day': {
-      const d = btn.dataset.date;
-      App.timelineWeekSelectedDate = (App.timelineWeekSelectedDate === d) ? '' : d;
-      render();
-      break;
-    }
-    case 'cal:month': App.timelineMonthSelect = !App.timelineMonthSelect; render(); break;
-    case 'month:year': {
-      const y = Number(btn.dataset.year);
-      const base = App.timelineDate || Store.todayStr();
-      const d0 = new Date(base + 'T00:00:00');
-      App.timelineDate = Store.toYMD(new Date(y, d0.getMonth(), 1));
-      App.timelineMonthSelect = true;
-      render();
-      break;
-    }
-    case 'month:month': {
-      const m = Number(btn.dataset.month);
-      const base = App.timelineDate || Store.todayStr();
-      const d0 = new Date(base + 'T00:00:00');
-      App.timelineDate = Store.toYMD(new Date(d0.getFullYear(), m, 1));
-      App.timelineMonthSelect = false;
       render();
       break;
     }
@@ -3043,80 +3102,6 @@ function onClick(e) {
     case 'cat:tag': {
       // 移动端无拖拽时的备选：点击标签头提示可拖拽
       toast('长按任务拖到这里即可归入「' + (AI.TAGS[btn.dataset.tag] || {}).name + '」');
-      break;
-    }
-    case 'timeline:menu': aiToast('hello'); break;
-    case 'timeline:gift': toast('礼物中心筹备中 🎁', { ai: true }); break;
-    case 'timeline:search': toast('全局搜索即将上线 🔍', { ai: true }); break;
-    case 'timeline:more': toast('更多设置敬请期待 ✨', { ai: true }); break;
-    case 'timeline:page': {
-      const dir = Number(btn.dataset.dir) || 0;
-      const base = App.timelineDate || Store.todayStr();
-      if (App.timelineView === 'month') {
-        const d = new Date(base + 'T00:00:00');
-        d.setMonth(d.getMonth() + dir);
-        App.timelineDate = Store.toYMD(d);
-      } else {
-        App.timelineDate = Store.shiftDate(Store.startOfWeek(base), dir * 7);
-      }
-      render();
-      break;
-    }
-    case 'timeline:day': {
-      const d = btn.dataset.date;
-      App.todayViewDate = d;
-      App.tab = 'today';
-      render();
-      break;
-    }
-    case 'focus:tab': {
-      App.timelineFocusTab = btn.dataset.tab || 'focus';
-      render();
-      break;
-    }
-    case 'today:summary': saveTodaySummary(btn.dataset.date); break;
-    case 'today:unhighlight': removeDayHighlight(btn.dataset.date, btn.dataset.hid); break;
-    case 'week:focus': saveWeekFocus(btn.dataset.week); break;
-    case 'week:summary': saveWeekSummary(btn.dataset.week); break;
-    case 'week:unhighlight': removeWeekHighlight(btn.dataset.week, btn.dataset.hid); break;
-    case 'month:summary': saveMonthNote(btn.dataset.month); break;
-    case 'month:unhighlight': removeMonthHighlight(btn.dataset.month, btn.dataset.hid); break;
-    case 'month:auto': doMonthAutoDecompose(btn.dataset.month); break;
-    case 'timeline:task': {
-      const d = btn.dataset.date, id = btn.dataset.id;
-      openTaskDetail(id, d === Store.todayStr() ? 'today' : 'day:' + d);
-      break;
-    }
-    case 'day:check': {
-      const d = btn.dataset.date, id = btn.dataset.id;
-      dayCheck(d, id);
-      break;
-    }
-    case 'day:more': {
-      const d = btn.dataset.date, id = btn.dataset.id;
-      openDayTaskMenu(d, id);
-      break;
-    }
-    case 'day:add': {
-      const d = btn.dataset.date;
-      dayAdd(d);
-      break;
-    }
-    case 'day:enter-today': {
-      closeModal();
-      App.todayViewDate = Store.todayStr();
-      App.tab = 'today';
-      render();
-      break;
-    }
-    case 'day:delete': {
-      const d = btn.dataset.date, id = btn.dataset.id;
-      dayDelete(d, id);
-      break;
-    }
-    case 'day:to-backlog': {
-      const d = btn.dataset.date, id = btn.dataset.id;
-      dayToBacklog(d, id);
       break;
     }
     case 'pool:pick': {
@@ -3229,6 +3214,19 @@ function endToday() {
 
 function toggleTask(id, opts = {}) {
   const store = Store.load();
+  // 来自日程的任务：id 为 's_' + schedId，同步标记 schedule.tasks 完成
+  if (id && id.indexOf('s_') === 0) {
+    const sid = id.slice(2);
+    const st = (store.schedule && store.schedule.tasks || []).find(x => x.id === sid);
+    if (!st) return;
+    st.isCompleted = !st.isCompleted;
+    st.completedAt = st.isCompleted ? Store.todayStr() : '';
+    if (st.isCompleted) store.completedLog.push({ id: Store.uid(), text: st.title, date: Store.todayStr(), doneAt: new Date().toISOString(), estMin: st.estMin, actualMin: st.estMin, mood: '😐', note: '' });
+    Store.save();
+    if (!opts.silent) actionToast(st.isCompleted ? '✨已完成，真棒。' : '已取消完成', () => toggleTask(id, { silent: true }));
+    render();
+    return;
+  }
   const t = store.today.tasks.find(x => x.id === id);
   if (!t) return;
   const wasDone = t.done;
@@ -3418,29 +3416,7 @@ function dayToToday(id, date) {
 }
 
 /* 删除某天的任务 */
-function dayDelete(id, date) {
-  const store = Store.load();
-  const list = (store.dayTasks && store.dayTasks[date]) || [];
-  const t = list.find(x => x.id === id);
-  if (!t) return;
-  confirmDelete(t.text, () => {
-    const st = Store.load();
-    const arr = (st.dayTasks && st.dayTasks[date]) || [];
-    const idx = arr.findIndex(x => x.id === id);
-    if (idx < 0) return;
-    const [removed] = arr.splice(idx, 1);
-    if (!arr.length && st.dayTasks) delete st.dayTasks[date];
-    Store.save();
-    render();
-    actionToast(`已删除"${removed.text}"`, () => {
-      const st2 = Store.load();
-      st2.dayTasks = st2.dayTasks || {};
-      st2.dayTasks[date] = st2.dayTasks[date] || [];
-      st2.dayTasks[date].splice(Math.min(idx, st2.dayTasks[date].length), 0, removed);
-      Store.save(); render();
-    });
-  });
-}
+
 
 /* 删除今日任务（二次确认 + 撤销） */
 function taskDelToday(id) {
@@ -3510,6 +3486,19 @@ function confirmGoal() {
     tasks
   };
   store.goals.push(g);
+  /* 数据联动：拆解出的任务同步进入「日程」统一调度池 */
+  (tasks || []).forEach(t => {
+    store.schedule = store.schedule || { tasks: [], weekGoals: {}, customCats: [] };
+    if (!store.schedule.tasks.some(x => x.goalId === g.id && x.title === t.text)) {
+      store.schedule.tasks.push({
+        id: Store.uid(), title: t.text, note: '', category: '', fragmentType: '',
+        priority: '中', dueDate: t.date || '', startTime: '', endTime: '',
+        isCompleted: !!t.done, completedAt: t.done ? t.date : '', isWeekGoal: false, weekGoalOrder: 0,
+        estMin: t.estMin, aiSuggestion: '', source: 'goal', goalId: g.id,
+        createdAt: Store.todayStr(), order: store.schedule.tasks.length
+      });
+    }
+  });
   /* 数据联动：Day 1（今日）任务立即进入今日列表 */
   const today = Store.todayStr();
   tasks.filter(t => t.date === today && !t.done).forEach(t => {
@@ -3990,6 +3979,495 @@ function clearDemoData() {
     Store.save();
     openSettings();
   });
+}
+
+/* ================= 日程 Tab · 交互 ================= */
+function closeSheet() { const r = $('#sheet-root'); if (r) r.innerHTML = ''; }
+
+/* —— 新建任务（含 AI 自动识别） —— */
+function catChips(sel) {
+  return `<button class="chip ${!sel ? 'on' : ''}" data-cat="">无</button>` +
+    Object.keys(AI.TAGS).map(k => `<button class="chip ${sel === k ? 'on' : ''}" data-cat="${k}"><span class="dot" style="background:${AI.TAGS[k].color}"></span>${AI.TAGS[k].name}</button>`).join('');
+}
+function attrChips(sel) {
+  const a = [['', '无'], ['碎片', '⏳'], ['顺路', '🚶'], ['大块时间', '🧘'], ['依赖天气', '🌤️']];
+  return a.map(([k, ic]) => `<button class="chip ${sel === k ? 'on' : ''}" data-attr="${k}">${ic}${k}</button>`).join('');
+}
+function prioChips(sel) { return ['低', '中', '高', '紧急'].map(p => `<button class="chip ${sel === p ? 'on' : ''}" data-prio="${p}">${p}</button>`).join(''); }
+function syncChips(sel, btn) { const r = $(sel); if (r) r.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === btn)); }
+function refreshSchedAiPreview() {
+  const elp = $('#sched-ai-preview'); if (!elp) return;
+  const f = App.schedForm; const title = (f.title || '').trim();
+  if (!title) { elp.innerHTML = ''; return; }
+  const tag = AI.autoTag(title); const frag = AI.classifyFragment(title, f.estMin);
+  const parts = [];
+  if (tag.tag) parts.push(`分类 <b>${AI.TAGS[tag.tag].name}</b>`);
+  if (frag) parts.push(`属性 <b>${frag}</b>`);
+  const sug = frag ? AI.fragmentSuggestion({ fragmentType: frag }) : '';
+  elp.innerHTML = `<span class="sn-ai-badge">AI 识别</span> ${parts.join(' · ')}${sug ? ` — ${esc(sug)}` : ''}`;
+}
+function openSchedNew(prefill) {
+  const today = Store.todayStr();
+  App.schedForm = App.schedForm || { title: '', category: '', fragmentType: '', priority: '中', dueDate: today, estMin: 15, note: '' };
+  if (prefill) App.schedForm.title = prefill;
+  const f = App.schedForm; App._dateTarget = { type: 'form' };
+  openSheet(`
+    <div class="sheet sched-new">
+      <div class="sheet-title">新建任务</div>
+      <input class="input" id="sched-title" placeholder="要安排点什么？" value="${esc(f.title)}" autofocus>
+      <div class="sn-ai" id="sched-ai-preview"></div>
+      <div class="sn-row"><span class="sn-label">分类</span><div class="chips" id="sched-cats">${catChips(f.category)}</div></div>
+      <div class="sn-row"><span class="sn-label">属性</span><div class="chips" id="sched-attrs">${attrChips(f.fragmentType)}</div></div>
+      <div class="sn-row"><span class="sn-label">优先级</span><div class="chips" id="sched-prio">${prioChips(f.priority)}</div></div>
+      <div class="sn-row"><span class="sn-label">日期</span><button class="sn-date" data-action="sched:pick-date">${f.dueDate ? Store.fmtMD(f.dueDate) : '未安排'}</button></div>
+      <div class="sn-row"><span class="sn-label">预计</span><input class="input sn-min" id="sched-min" type="number" min="1" max="600" value="${f.estMin || 15}"><span class="sn-unit">分钟</span></div>
+      <div class="sheet-acts">
+        <button class="btn-ghost sheet-cancel">取消</button>
+        <button class="btn-primary" data-action="sched:save">保存</button>
+      </div>
+    </div>`);
+  const root = $('.sched-new');
+  if (root) {
+    root.querySelectorAll('#sched-cats .chip').forEach(b => b.addEventListener('click', () => { App.schedForm.category = b.dataset.cat || ''; syncChips('#sched-cats', b); refreshSchedAiPreview(); }));
+    root.querySelectorAll('#sched-attrs .chip').forEach(b => b.addEventListener('click', () => { App.schedForm.fragmentType = b.dataset.attr || ''; syncChips('#sched-attrs', b); refreshSchedAiPreview(); }));
+    root.querySelectorAll('#sched-prio .chip').forEach(b => b.addEventListener('click', () => { App.schedForm.priority = b.dataset.prio || '中'; syncChips('#sched-prio', b); }));
+  }
+  const min = $('#sched-min'); if (min) min.addEventListener('input', () => { App.schedForm.estMin = Number(min.value) || 15; refreshSchedAiPreview(); });
+  const inp = $('#sched-title');
+  if (inp) { inp.addEventListener('input', () => { App.schedForm.title = inp.value; refreshSchedAiPreview(); }); setTimeout(() => inp.focus(), 60); }
+  refreshSchedAiPreview();
+}
+function saveSchedTask() {
+  const store = Store.load(); const f = App.schedForm; const title = (f.title || '').trim();
+  if (!title) { toast('先写点什么吧'); return; }
+  const est = Number($('#sched-min') ? $('#sched-min').value : 15) || 15;
+  const cat = f.category || AI.autoTag(title).tag || '';
+  const frag = f.fragmentType || AI.classifyFragment(title, est) || '';
+  store.schedule = store.schedule || { tasks: [], weekGoals: {}, customCats: [] };
+  store.schedule.tasks.push({
+    id: Store.uid(), title, note: f.note || '', category: cat, fragmentType: frag, priority: f.priority || '中',
+    dueDate: f.dueDate || '', startTime: '', endTime: '', isCompleted: false, completedAt: '',
+    isWeekGoal: false, weekGoalOrder: 0, estMin: est, aiSuggestion: frag ? AI.fragmentSuggestion({ fragmentType: frag }) : '',
+    source: 'manual', createdAt: Store.todayStr(), order: store.schedule.tasks.length
+  });
+  Store.save(); closeSheet(); render(); actionToast('已加入日程');
+}
+
+/* —— 任务详情 / 编辑 / 删除 —— */
+function openSchedDetail(id) {
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (!t) return;
+  const cat = catMeta(t.category);
+  const rows = `
+    <div class="ds-row"><span class="ds-k">分类</span><span class="ds-v"><span class="sched-dot" style="background:${cat.color}"></span>${cat.name}</span></div>
+    ${t.fragmentType ? `<div class="ds-row"><span class="ds-k">属性</span><span class="ds-v">${attrIcon(t.fragmentType)} ${t.fragmentType}</span></div>` : ''}
+    ${t.priority && t.priority !== '中' ? `<div class="ds-row"><span class="ds-k">优先级</span><span class="ds-v">${t.priority}</span></div>` : ''}
+    <div class="ds-row"><span class="ds-k">预计</span><span class="ds-v">${t.estMin ? t.estMin + ' 分钟' : '未填写'}</span></div>
+    ${t.dueDate ? `<div class="ds-row"><span class="ds-k">日期</span><span class="ds-v">${Store.fmtMD(t.dueDate)} ${Store.fmtDOW(t.dueDate)}</span></div>` : '<div class="ds-row"><span class="ds-k">日期</span><span class="ds-v">未安排</span></div>'}
+    ${t.aiSuggestion ? `<div class="ds-row"><span class="ds-k">AI</span><span class="ds-v">💡 ${esc(t.aiSuggestion)}</span></div>` : ''}
+    ${t.isWeekGoal ? `<div class="ds-row"><span class="ds-k">周目标</span><span class="ds-v">🎯 已设为本周目标</span></div>` : ''}`;
+  const acts = t.isCompleted
+    ? `<button class="btn-primary" data-action="sched:check" data-id="${t.id}">↺ 重新打开</button>`
+    : `<button class="btn-primary" data-action="sched:check" data-id="${t.id}">✓ 标记完成</button>
+       <button class="btn-ghost" data-action="sched:goal-toggle" data-id="${t.id}">${t.isWeekGoal ? '取消周目标' : '🎯 设本周目标'}</button>
+       <button class="btn-ghost" data-action="sched:date" data-id="${t.id}">📅 改日期</button>
+       <button class="btn-ghost" data-action="sched:edit" data-id="${t.id}">✏️ 编辑</button>
+       <button class="btn-danger" data-action="sched:del" data-id="${t.id}">删除</button>`;
+  openSheet(`<div class="sheet"><div class="sheet-title">${esc(t.title)}</div><div class="sheet-body">${rows}</div><div class="sheet-acts">${acts}</div></div>`);
+}
+function openSchedEdit(id) {
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (!t) return;
+  App._editSchedId = id;
+  openModal(modalShell('编辑任务', '修改内容、分类、属性与日期。',
+    `<input class="input" id="sched-edit-title" value="${esc(t.title)}">
+     <div class="sn-row" style="margin-top:8px"><span class="sn-label">分类</span><div class="chips" id="sched-edit-cats">${catChips(t.category)}</div></div>
+     <div class="sn-row"><span class="sn-label">属性</span><div class="chips" id="sched-edit-attrs">${attrChips(t.fragmentType)}</div></div>
+     <div class="sn-row"><span class="sn-label">优先级</span><div class="chips" id="sched-edit-prio">${prioChips(t.priority)}</div></div>
+     <div class="sn-row"><span class="sn-label">预计</span><input class="input sn-min" id="sched-edit-min" type="number" min="1" max="600" value="${t.estMin || 15}"><span class="sn-unit">分钟</span></div>`,
+    `<div class="modal-actions">
+      <button class="btn-ghost" data-action="modal:close">取消</button>
+      <button class="btn-primary" data-action="sched:save-edit">保存</button>
+    </div>`));
+  const root = $('#modal-root');
+  if (root) {
+    root.querySelectorAll('#sched-edit-cats .chip').forEach(b => b.addEventListener('click', () => syncChips('#sched-edit-cats', b)));
+    root.querySelectorAll('#sched-edit-attrs .chip').forEach(b => b.addEventListener('click', () => syncChips('#sched-edit-attrs', b)));
+    root.querySelectorAll('#sched-edit-prio .chip').forEach(b => b.addEventListener('click', () => syncChips('#sched-edit-prio', b)));
+  }
+}
+function saveSchedEdit() {
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === App._editSchedId);
+  if (!t) return;
+  const title = $('#sched-edit-title').value.trim();
+  if (!title) { toast('任务内容不能为空。'); return; }
+  const est = Number($('#sched-edit-min').value) || 15;
+  const cat = ($('#modal-root .chip.on') ? ($('#modal-root #sched-edit-cats .chip.on') || {}).dataset : {}).cat || '';
+  const catChip = $('#modal-root #sched-edit-cats .chip.on');
+  const attrChip = $('#modal-root #sched-edit-attrs .chip.on');
+  const prioChip = $('#modal-root #sched-edit-prio .chip.on');
+  t.title = title;
+  t.category = catChip ? (catChip.dataset.cat || '') : '';
+  t.fragmentType = attrChip ? (attrChip.dataset.attr || '') : '';
+  t.priority = prioChip ? (prioChip.dataset.prio || '中') : '中';
+  t.estMin = est;
+  t.aiSuggestion = t.fragmentType ? AI.fragmentSuggestion({ fragmentType: t.fragmentType }) : '';
+  Store.save(); closeModal(); render();
+}
+function schedCheck(id) {
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (!t) return;
+  t.isCompleted = !t.isCompleted;
+  if (t.isCompleted) {
+    t.completedAt = Store.todayStr();
+    store.completedLog.push({ id: Store.uid(), text: t.title, date: Store.todayStr(), doneAt: new Date().toISOString(), estMin: t.estMin, actualMin: t.estMin, mood: store.today.status || '😐', note: '' });
+    aiToast('task_done', { task: t.title }, { fallback: `「${t.title}」完成啦，记一笔 ✦` });
+  } else {
+    const i = store.completedLog.findIndex(e => e.text === t.title && e.date === Store.todayStr());
+    if (i >= 0) store.completedLog.splice(i, 1);
+  }
+  Store.save(); closeSheet(); render();
+}
+function schedToggleGoal(id) {
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (!t) return;
+  t.isWeekGoal = !t.isWeekGoal;
+  if (t.isWeekGoal) t.weekGoalOrder = store.schedule.tasks.filter(x => x.isWeekGoal).length + 1;
+  Store.save(); closeSheet(); render();
+  toast(t.isWeekGoal ? '已设为本周目标 🎯' : '已移出周目标');
+}
+function schedDelete(id) {
+  const store = Store.load();
+  store.schedule.tasks = (store.schedule.tasks || []).filter(x => x.id !== id);
+  Store.save(); closeSheet(); render(); actionToast('已删除任务');
+}
+
+/* —— 日期选择器 —— */
+function openSchedDatePicker(kind, id) {
+  App._dateTarget = { type: kind, id: id || '' };
+  const today = Store.todayStr();
+  const days = []; for (let i = 0; i < 14; i++) days.push(Store.shiftDate(today, i));
+  const grid = days.map(d => `<button class="dp-day" data-action="sched:set-date" data-date="${d}"><b>${Number(d.split('-')[2])}</b><small>${Store.fmtDOW(d)}</small></button>`).join('');
+  if (kind === 'form') {
+    openModal(modalShell('选择日期', '', `<div class="dp-grid">${grid}</div><div class="modal-actions"><button class="btn-ghost" data-action="sched:set-date" data-date="">清除（未安排）</button></div>`));
+  } else {
+    openSheet(`<div class="sheet"><div class="sheet-title">选择日期</div><div class="dp-grid">${grid}</div><div class="sheet-acts"><button class="btn-ghost" data-action="sched:set-date" data-date="">清除（未安排）</button></div></div>`);
+  }
+}
+function applySchedDate(date) {
+  const tgt = App._dateTarget;
+  if (tgt && tgt.type === 'form') {
+    App.schedForm.dueDate = date;
+    const btn = document.querySelector('.sched-new .sn-date');
+    if (btn) btn.textContent = date ? Store.fmtMD(date) : '未安排';
+    closeModal();
+    return;
+  }
+  const store = Store.load();
+  if (tgt && tgt.type === 'menu') {
+    schedMenuApply(tgt.id, date); closeSheet(); return;
+  }
+  const t = (store.schedule.tasks || []).find(x => x.id === (tgt ? tgt.id : ''));
+  if (t) { t.dueDate = date; t.isWeekGoal = false; Store.save(); }
+  closeSheet(); render();
+}
+
+/* —— 周目标 / 本周重点总结 —— */
+function schedGoalRemove(id) {
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (!t) return;
+  t.isWeekGoal = false; Store.save(); render();
+}
+function schedFocusAdd() {
+  const inp = $('#sched-focus-input'); if (!inp) return;
+  const v = inp.value.trim(); if (!v) return;
+  const monday = Store.startOfWeek(Store.todayStr());
+  const store = Store.load(); store.weekNotes = store.weekNotes || {};
+  const n = store.weekNotes[monday] || { focus: '', summary: '', items: [] };
+  n.items = n.items || [];
+  n.items.push({ id: Store.uid(), text: v });
+  store.weekNotes[monday] = n; Store.save(); render();
+}
+function schedFocusDel(i) {
+  const monday = Store.startOfWeek(Store.todayStr());
+  const store = Store.load(); store.weekNotes = store.weekNotes || {};
+  const n = store.weekNotes[monday] || { focus: '', summary: '', items: [] };
+  n.items = n.items || [];
+  n.items.splice(Number(i), 1); Store.weekNotes[monday] = n; Store.save(); render();
+}
+function schedSummarySave(monday, val) {
+  const store = Store.load(); store.weekNotes = store.weekNotes || {};
+  const n = store.weekNotes[monday] || { focus: '', summary: '', items: [] };
+  n.summary = val; store.weekNotes[monday] = n; Store.save();
+}
+function schedMonthFocusAdd() {
+  const inp = $('#sched-month-focus-input'); if (!inp) return;
+  const v = inp.value.trim(); if (!v) return;
+  const key = Store.monthKey(App.schedDate || Store.todayStr());
+  const store = Store.load(); store.monthNotes = store.monthNotes || {};
+  const n = store.monthNotes[key] || { focus: '', summary: '', items: [] };
+  n.items = n.items || [];
+  n.items.push({ id: Store.uid(), text: v });
+  store.monthNotes[key] = n; Store.save(); render();
+}
+function schedMonthFocusDel(i) {
+  const key = Store.monthKey(App.schedDate || Store.todayStr());
+  const store = Store.load(); store.monthNotes = store.monthNotes || {};
+  const n = store.monthNotes[key] || { focus: '', summary: '', items: [] };
+  n.items = n.items || [];
+  n.items.splice(Number(i), 1); Store.monthNotes[key] = n; Store.save(); render();
+}
+function schedMonthSummarySave(key, val) {
+  const store = Store.load(); store.monthNotes = store.monthNotes || {};
+  const n = store.monthNotes[key] || { focus: '', summary: '', items: [] };
+  n.summary = val; store.monthNotes[key] = n; Store.save();
+}
+
+/* —— 自定义分类 —— */
+function openSchedNewCat() {
+  const palette = ['#FF6B6B', '#FF9F43', '#2ED573', '#4A8CFF', '#A29BFE', '#FD79A8', '#8E7CC3', '#5BC0BE'];
+  openSheet(`
+    <div class="sheet">
+      <div class="sheet-title">新建分类</div>
+      <input class="input" id="sched-cat-name" placeholder="分类名称">
+      <div class="chips" id="sched-cat-colors" style="margin-top:10px">${palette.map((c, i) => `<button class="chip ${i === 0 ? 'on' : ''}" data-color="${c}"><span class="dot" style="background:${c}"></span></button>`).join('')}</div>
+      <div class="sheet-acts">
+        <button class="btn-ghost sheet-cancel">取消</button>
+        <button class="btn-primary" data-action="sched:cat-save">保存</button>
+      </div>
+    </div>`);
+  const root = $('#sheet-root');
+  if (root) root.querySelectorAll('#sched-cat-colors .chip').forEach(b => b.addEventListener('click', () => syncChips('#sched-cat-colors', b)));
+}
+function saveSchedCat() {
+  const inp = $('#sched-cat-name'); const name = inp ? inp.value.trim() : '';
+  if (!name) { toast('给分类起个名字吧'); return; }
+  const colorBtn = $('#sheet-root #sched-cat-colors .chip.on');
+  const color = colorBtn ? colorBtn.dataset.color : '#8E7CC3';
+  const store = Store.load(); store.schedule = store.schedule || { tasks: [], weekGoals: {}, customCats: [] };
+  store.schedule.customCats = store.schedule.customCats || [];
+  if (store.schedule.customCats.some(c => c.name === name)) { toast('已存在同名分类'); return; }
+  store.schedule.customCats.push({ key: 'c' + Store.uid().slice(0, 6), name, color });
+  Store.save(); closeSheet(); render();
+}
+function schedCatDelete(key) {
+  const store = Store.load();
+  if (store.schedule && store.schedule.customCats) store.schedule.customCats = store.schedule.customCats.filter(c => c.key !== key);
+  Store.save(); render();
+}
+
+/* —— 灵感箱 → 日程（数据联动） —— */
+function inboxToSchedule(id) {
+  const store = Store.load();
+  const it = (store.backlog || []).find(x => x.id === id);
+  if (!it) return;
+  const tag = it.tag || AI.autoTag(it.text).tag;
+  const frag = AI.classifyFragment(it.text, 15);
+  store.backlog = (store.backlog || []).filter(x => x.id !== id);
+  store.schedule = store.schedule || { tasks: [], weekGoals: {}, customCats: [] };
+  store.schedule.tasks.push({
+    id: it.id, title: it.text, note: '', category: tag, fragmentType: frag, priority: it.priority ? '高' : '中',
+    dueDate: '', startTime: '', endTime: '', isCompleted: false, completedAt: '',
+    isWeekGoal: false, weekGoalOrder: 0, estMin: it.estMin || 15, aiSuggestion: frag ? AI.fragmentSuggestion({ fragmentType: frag }) : '',
+    source: 'backlog', createdAt: Store.todayStr(), order: store.schedule.tasks.length
+  });
+  Store.save(); render(); actionToast('已收进「日程」的待安排池');
+}
+
+/* —— 快速安排：从侧栏拖到时间块 / 日期 —— */
+function assignTaskToSlot(id, date, time) {
+  if (!id || !date || !time) return;
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (t) {
+    t.dueDate = date;
+    t.startTime = time;
+    t.endTime = addMin(time, t.estMin || 30);
+    Store.save(); render(); toast('已安排在 ' + Store.fmtMD(date) + ' ' + time);
+    return;
+  }
+  // 从待办池拖入
+  const it = (store.backlog || []).find(x => x.id === id);
+  if (it) {
+    store.backlog = (store.backlog || []).filter(x => x.id !== id);
+    const tag = it.tag || AI.autoTag(it.text).tag;
+    const frag = AI.classifyFragment(it.text, 15);
+    store.schedule = store.schedule || { tasks: [], weekGoals: {}, customCats: [] };
+    store.schedule.tasks.push({
+      id: it.id, title: it.text, note: '', category: tag, fragmentType: frag, priority: it.priority ? '高' : '中',
+      dueDate: date, startTime: time, endTime: addMin(time, it.estMin || 15),
+      isCompleted: false, completedAt: '', isWeekGoal: false, weekGoalOrder: 0,
+      estMin: it.estMin || 15, aiSuggestion: frag ? AI.fragmentSuggestion({ fragmentType: frag }) : '',
+      source: 'backlog', createdAt: Store.todayStr(), order: store.schedule.tasks.length
+    });
+    Store.save(); render(); toast('已把「' + esc(it.text) + '」安排在 ' + Store.fmtMD(date) + ' ' + time);
+  }
+}
+function assignTaskToDay(id, date) {
+  if (!id || !date) return;
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (t) {
+    t.dueDate = date;
+    Store.save(); render(); toast('已安排到 ' + Store.fmtMD(date));
+    return;
+  }
+  const it = (store.backlog || []).find(x => x.id === id);
+  if (it) {
+    store.backlog = (store.backlog || []).filter(x => x.id !== id);
+    const tag = it.tag || AI.autoTag(it.text).tag;
+    const frag = AI.classifyFragment(it.text, 15);
+    store.schedule = store.schedule || { tasks: [], weekGoals: {}, customCats: [] };
+    store.schedule.tasks.push({
+      id: it.id, title: it.text, note: '', category: tag, fragmentType: frag, priority: it.priority ? '高' : '中',
+      dueDate: date, startTime: '', endTime: '',
+      isCompleted: false, completedAt: '', isWeekGoal: false, weekGoalOrder: 0,
+      estMin: it.estMin || 15, aiSuggestion: frag ? AI.fragmentSuggestion({ fragmentType: frag }) : '',
+      source: 'backlog', createdAt: Store.todayStr(), order: store.schedule.tasks.length
+    });
+    Store.save(); render(); toast('已把「' + esc(it.text) + '」放入 ' + Store.fmtMD(date));
+  }
+}
+function assignTaskToQuadrant(id, date, quad) {
+  if (!id || !date || !quad) return;
+  const store = Store.load();
+  const prio = prioForQuadrant(quad);
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (t) {
+    t.dueDate = date;
+    t.priority = prio;
+    if (quad === 'q4') t.isWeekGoal = false;
+    Store.save(); render(); toast('已放入「' + quadMeta(quad).name + '」');
+    return;
+  }
+  const it = (store.inbox || []).find(x => x.id === id);
+  if (it) {
+    store.inbox = (store.inbox || []).filter(x => x.id !== id);
+    const tag = AI.autoTag(it.text).tag;
+    const frag = AI.classifyFragment(it.text, 15);
+    store.schedule = store.schedule || { tasks: [], weekGoals: {}, customCats: [] };
+    store.schedule.tasks.push({
+      id: it.id, title: it.text, note: '', category: tag, fragmentType: frag, priority: prio,
+      dueDate: date, startTime: '', endTime: '',
+      isCompleted: false, completedAt: '', isWeekGoal: false, weekGoalOrder: 0,
+      estMin: 15, aiSuggestion: frag ? AI.fragmentSuggestion({ fragmentType: frag }) : '',
+      source: 'inspiration_box', createdAt: Store.todayStr(), order: store.schedule.tasks.length
+    });
+    Store.save(); render(); toast('已把「' + esc(it.text) + '」放入「' + quadMeta(quad).name + '」');
+  }
+}
+function openInboxCapture() {
+  openSheet(`<div class="sheet"><div class="sheet-title">快速捕捉</div>
+    <input class="input" id="sb-capture-input" placeholder="想到什么先丢进来…" autofocus>
+    <div class="sheet-acts"><button class="btn-ghost sheet-cancel">取消</button><button class="btn-primary" data-action="sb:capture-save">保存</button></div>
+  </div>`);
+  setTimeout(() => { const i = $('#sb-capture-input'); if (i) i.focus(); }, 60);
+}
+function saveSbCapture() {
+  const inp = $('#sb-capture-input'); if (!inp) return;
+  const v = inp.value.trim(); if (!v) return;
+  const store = Store.load();
+  const tag = App.inboxTag || AI.autoTag(v).tag || '';
+  store.backlog = store.backlog || [];
+  store.backlog.unshift({ id: Store.uid(), text: v, estMin: 15, priority: false, originalDate: Store.todayStr(), why: '', tag });
+  if (tag) AI.recordTag(v, tag);
+  store.flags.tabDots = { ...(store.flags.tabDots || {}), backlog: true };
+  App.inboxTag = '';
+  Store.save(); closeSheet(); render(); actionToast('已收进待办 ✨');
+}
+
+/* —— 移动端长按菜单（降级拖拽） —— */
+function openSchedItemMenu(id) {
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  const it = (store.backlog || []).find(x => x.id === id);
+  const title = t ? t.title : (it ? it.text : '任务');
+  const date = App.schedDate || Store.todayStr();
+  openSheet(`<div class="sheet">
+    <div class="sheet-title">${esc(title)}</div>
+    <button class="sheet-row" data-action="sched:menu-today" data-id="${id}">📅 安排到今天</button>
+    <button class="sheet-row" data-action="sched:menu-week" data-id="${id}">🗓️ 安排到本周</button>
+    <button class="sheet-row" data-action="sched:menu-date" data-id="${id}">📆 指定日期…</button>
+    ${it ? `<button class="sheet-row" data-action="sched:menu-keep" data-id="${id}">📥 留在待办</button>` : ''}
+    <button class="sheet-row" data-action="sched:menu-edit" data-id="${id}">✏️ 编辑</button>
+    <button class="sheet-row danger" data-action="sched:menu-del" data-id="${id}">🗑 删除</button>
+    <div class="sheet-acts"><button class="btn-ghost sheet-cancel">取消</button></div>
+  </div>`);
+}
+function schedMenuApply(id, date) {
+  const store = Store.load();
+  const t = (store.schedule.tasks || []).find(x => x.id === id);
+  if (t) { t.dueDate = date; Store.save(); render(); toast('已安排到 ' + Store.fmtMD(date)); return; }
+  const it = (store.backlog || []).find(x => x.id === id);
+  if (it) {
+    store.backlog = (store.backlog || []).filter(x => x.id !== id);
+    const tag = it.tag || AI.autoTag(it.text).tag;
+    const frag = AI.classifyFragment(it.text, 15);
+    store.schedule = store.schedule || { tasks: [], weekGoals: {}, customCats: [] };
+    store.schedule.tasks.push({ id: it.id, title: it.text, note: '', category: tag, fragmentType: frag, priority: it.priority ? '高' : '中', dueDate: date, startTime: '', endTime: '', isCompleted: false, completedAt: '', isWeekGoal: false, weekGoalOrder: 0, estMin: it.estMin || 15, aiSuggestion: '', source: 'backlog', createdAt: Store.todayStr(), order: store.schedule.tasks.length });
+    Store.save(); render(); toast('已把「' + esc(it.text) + '」放入 ' + Store.fmtMD(date));
+  }
+}
+
+/* —— 拖拽调度 —— */
+let _dragSchedId = null;
+function bindScheduleDrag() {
+  document.addEventListener('dragstart', e => {
+    const c = e.target.closest('.dq-task, .wc-task, .sb-item, .sb-inbox-item, .allday-pill');
+    if (c) {
+      _dragSchedId = c.dataset.sid || c.dataset.id;
+      c.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', _dragSchedId); }
+    }
+  });
+  document.addEventListener('dragover', e => {
+    if (!_dragSchedId) return;
+    const quad = e.target.closest('.day-quad');
+    const slot = e.target.closest('.dgd-slot');
+    const day = e.target.closest('.wc-body, .month-cell');
+    const card = e.target.closest('.wc-task');
+    const el = quad || slot || day || card;
+    if (el) { e.preventDefault(); el.classList.add('drop-hot'); }
+  });
+  document.addEventListener('drop', e => {
+    if (!_dragSchedId) return;
+    const id = _dragSchedId; _dragSchedId = null;
+    document.querySelectorAll('.day-quad.drop-hot,.dgd-slot.drop-hot,.wc-body.drop-hot,.month-cell.drop-hot,.wc-task.drop-hot').forEach(c => c.classList.remove('drop-hot'));
+    const quad = e.target.closest('.day-quad');
+    const slot = e.target.closest('.dgd-slot');
+    const day = e.target.closest('.wc-body, .month-cell');
+    if (quad) { assignTaskToQuadrant(id, quad.dataset.date, quad.dataset.quad); return; }
+    if (slot) { assignTaskToSlot(id, slot.dataset.date, slot.dataset.time); return; }
+    if (day) { assignTaskToDay(id, day.dataset.date); return; }
+  });
+  document.addEventListener('dragend', e => {
+    const c = e.target.closest('.dq-task, .wc-task, .sb-item, .sb-inbox-item, .allday-pill');
+    if (c) c.classList.remove('dragging');
+    document.querySelectorAll('.day-quad.drop-hot,.dgd-slot.drop-hot,.wc-body.drop-hot,.month-cell.drop-hot,.wc-task.drop-hot').forEach(x => x.classList.remove('drop-hot'));
+    _dragSchedId = null;
+  });
+
+  // 移动端长按 → 呼出菜单（降级拖拽）
+  let _lpTimer = null, _lpMoved = false, _lpEl = null;
+  document.addEventListener('touchstart', e => {
+    const el = e.target.closest('[data-action-menu]');
+    if (!el) return;
+    _lpMoved = false; _lpEl = el;
+    _lpTimer = setTimeout(() => {
+      if (!_lpMoved && _lpEl) {
+        const id = _lpEl.dataset.sid || _lpEl.dataset.id;
+        if (id) openSchedItemMenu(id);
+      }
+    }, 480);
+  }, { passive: true });
+  document.addEventListener('touchmove', () => { _lpMoved = true; if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } }, { passive: true });
+  document.addEventListener('touchend', () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } }, { passive: true });
 }
 
 /* ================= 启动 ================= */

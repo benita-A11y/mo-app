@@ -375,72 +375,16 @@ function renderToday() {
       </li>`;
   };
 
-  // 碎片建议卡：时间线空白处（骨架空档）自动出现，每日每任务最多提醒 2 次
-  const fragCard = (() => {
-    const st2 = Store.load();
-    const free = AI.currentFreeSlot();
-    if (!free || free.minutes < 5) return '';
-    const today = Store.todayStr();
-    const cands = AI.fragCandidates(st2).filter(c => (st2.flags.fragRemind[`${today}:${c.id}`] || 0) < 2);
-    if (!cands.length) return '';
-    const shown = cands.slice(0, 2);
-    return `
-      <div class="frag-card">
-        <div class="frag-head">⏳ 现在有 ${free.minutes} 分钟空闲，可以：</div>
-        ${shown.map(c => `
-          <div class="frag-item">
-            <span class="frag-txt">⚡ ${esc(c.text)}${c.estMin ? `<small>${c.estMin}分钟</small>` : ''}</span>
-            <span class="frag-acts">
-              <button class="mini-btn ok" data-action="frag:start" data-id="${c.id}" data-from="${c.from}">开始做</button>
-              <button class="mini-btn ghost" data-action="frag:ignore" data-id="${c.id}">忽略</button>
-            </span>
-          </div>`).join('')}
-      </div>`;
-  })();
+  /* 碎片建议卡已随「对话框版」还原移除（避免画面过载） */
 
   const hero = aiHero();
 
-  // ② 今日核心目标：只显示1件最重要的事，柔和底色聚焦执行
-  const prioUndone = undone.filter(t => t.priority);
-  const p0 = prioUndone[0];
-  const p0Card = `
-    <section class="card p0-card${p0 ? '' : ' p0-empty'}">
-      <div class="card-title"><span class="t">⭐ 今日核心目标</span></div>
-      ${p0 ? `
-        <div class="p0-item">
-          <button class="p0-check" data-action="task:check" data-id="${p0.id}" aria-label="完成"></button>
-          <div class="p0-body">
-            <span class="p0-text">${esc(p0.text)}</span>
-            ${p0.why ? `<span class="p0-why">${esc(p0.why)}</span>` : ''}
-          </div>
-          ${p0.estMin ? `<span class="p0-min">${p0.estMin}分钟</span>` : ''}
-        </div>` : `
-        <div class="p0-empty-txt">今天没有标记优先的事，挑一件最想先完成的就好。</div>`}
-    </section>`;
+  /* 今日页已还原为原始「对话框版」：问候语由 header 提供；主体为 AI 气泡 + 统计 + 时间线 + 已完成 + 底部栏 */
 
-  // ⑥ ISFJ 舒适区：当天未完成任务超过 3 件时温和提醒（不催促，给选择权）
-  const COMFORT_MAX = 3;
-  const comfortTip = (isTodayView && undone.length > COMFORT_MAX)
-    ? `<div class="comfort-tip">今天有 ${undone.length} 件，超过舒服的 3 件啦。挑最顺手的先做，其余可以顺延到待办，没关系的。</div>`
-    : '';
-
-  const pendingCount = undone.filter(t => !t.matched).length;
-
-  // 「今日微调」入口：时间骨架启用且今天有固定安排时，低调出现在标题右侧
-  const skn = store.settings.skeleton;
-  const dowKey = DOW_KEYS[new Date(Store.todayStr() + 'T00:00:00').getDay()];
-  const todaySegs = skn && skn.enabled
-    ? (((skn.overrides && skn.overrides[Store.todayStr()]) !== undefined) ? skn.overrides[Store.todayStr()] : (skn.week[dowKey] || []))
-    : [];
-  const todaySkelBtn = skn && skn.enabled && todaySegs.length
-    ? `<button class="mini-btn ghost" data-action="skeleton:today" style="margin-left:auto">今日微调</button>`
-    : '';
-
-  // ③ 今日概览：总量一行（X件·预计X分钟·剩余空闲X分钟），聚焦执行
+  // 今日概览：总量一行（X件·预计X分钟·剩余空闲X分钟），聚焦执行
   const overviewBar = `
     <div class="task-bar task-bar-tl">
       <div class="stats"><strong>${undone.length}件</strong> · 预计 ${totalMin} 分钟 · 剩余空闲 ${freeMin} 分钟</div>
-      ${todaySkelBtn}
     </div>`;
 
   // ⑦ 已完成区块（默认折叠，点击展开）
@@ -455,65 +399,18 @@ function renderToday() {
 
   // 灵感箱 / 待办 / 目标进度已分别归属「待办页 / 目标页」；今日页只聚焦「今天要做什么」
 
-  // 顶部日期导航条：本周 周一~周日，可前后翻周；选中日期切换当日视图
-  const navStart = Store.startOfWeek(viewDate);
-  const navDays = Store.weekDates(viewDate).map(d => {
-    const isToday = d === Store.todayStr();
-    const isSel = d === viewDate;
-    const dt = new Date(d + 'T00:00:00');
-    const dd = dt.getDate();
-    const tasks = tasksForDate(d);
-    const doneN = tasks.filter(t => t.done).length;
-    const totalN = tasks.length;
-    return `<button class="dn-day${isSel ? ' on' : ''}${isToday ? ' today' : ''}" data-action="today:date" data-date="${d}">
-        <span class="dn-dow">${Store.fmtDOW(d)}</span>
-        <span class="dn-date">${dd}</span>
-        <span class="dn-count">${totalN ? `${doneN}/${totalN}` : '·'}</span>
-      </button>`;
-  }).join('');
-  const dateNav = `
-    <div class="date-nav">
-      <button class="dn-arrow" data-action="today:week" data-dir="-1" aria-label="上一周">‹</button>
-      <div class="dn-days">${navDays}</div>
-      <button class="dn-arrow" data-action="today:week" data-dir="1" aria-label="下一周">›</button>
-    </div>
-    <div class="date-nav-sub">
-      <button class="dn-today${viewDate === Store.todayStr() ? ' on' : ''}" data-action="today:date" data-date="${Store.todayStr()}">回到今天</button>
-      <span class="dn-viewing">${viewDate === Store.todayStr() ? '今天' : Store.fmtMD(viewDate)} · ${undone.length} 件待办</span>
-    </div>`;
+  /* 原始版今日页无周日期切换条；查看其他日可在「时间轴」中操作（若启用） */
 
   const isTodayView = viewDate === Store.todayStr();
 
-  // 自由日：本周任务最少的一天自动成为自由日（每7天1天），当天不强制安排
-  let freeDayTip = '';
-  if (isTodayView) {
-    const freeDate = AI.freeDayCheck(Store.todayStr());
-    const isFree = freeDate === Store.todayStr();
-    if (isFree && undone.length <= 1) {
-      freeDayTip = `<div class="free-day-tip">🌿 今天没有安排，可以自由呼吸。补点进度，或者就好好休息，都行。</div>`;
-    }
-  }
+  /* 自由日等轻提示已并入下方 end-note，保持画面干净 */
 
   return `
     <div class="today-stack">
 
       ${hero}
 
-      ${dateNav}
-
-      ${freeDayTip}
-
-      ${p0Card}
-
       ${overviewBar}
-
-      ${comfortTip}
-
-      ${isTodayView && pendingCount ? `
-        <div class="confirm-all">
-          <span class="label">🛣 墨已把任务放进你的动线</span>
-          <button class="btn" data-action="task:accept-all">一键全确认</button>
-        </div>` : ''}
 
       <div class="timeline">
         ${groups.map(g => `
@@ -529,11 +426,7 @@ function renderToday() {
           </div>`).join('')}
       </div>
 
-      ${isTodayView ? fragCard : ''}
-
       ${doneSection}
-
-      ${isTodayView ? `<button class="end-day-ghost" data-action="day:end">🌙 今天做完了？结束今天</button>` : ''}
 
       ${isTodayView ? `
       <div class="today-bottom">
@@ -552,7 +445,7 @@ function renderToday() {
     </div>`;
 }
 
-/* AI 英雄气泡（今日页） */
+/* AI 对话气泡（今日页 · 原始对话框版） */
 function aiHero() {
   const store = Store.load();
   const undone = store.today.tasks.filter(t => !t.done).length;
@@ -560,24 +453,39 @@ function aiHero() {
   const total = store.today.tasks.length;
   const prio = store.today.tasks.filter(t => t.priority && !t.done).length;
   const h = new Date().getHours();
+  const LOW = ['😔', '😣', '😞', '😟', '😢', '😩', '😫', '😪', '😰', '😥'];
 
   let text;
-  if (total === 0) return '';
-  if (undone === 0 && total > 0) {
+  if (total === 0) {
+    text = AI.copy('today_empty');
+  } else if (undone === 0) {
     text = AI.copy('all_done');
+  } else if (store.today.status && LOW.includes(store.today.status)) {
+    text = AI.copy('mood_low');
   } else if (h >= 18) {
-    text = AI.copy('evening', { done, total });
+    text = AI.copy('evening', { D: done, R: total - done });
   } else {
-    text = AI.copy('morning', { total: undone, priorityCount: prio });
+    text = AI.copy('morning', { T: undone, P: prio });
   }
-  // 连续3天全勤
+  // 连续3天全勤（仅在还有未完成时追加，避免已完成日画蛇添足）
   const streak = calcStreak();
-  if (streak >= 3 && store.flags.streakShownDate !== Store.todayStr()) {
+  if (streak >= 3 && store.flags.streakShownDate !== Store.todayStr() && undone > 0) {
     text = `${text} ${AI.copy('streak3')}`;
     store.flags.streakShownDate = Store.todayStr();
     Store.save();
   }
-  return bubble(text, 'left', 'hero-bubble');
+  return todayHeroHtml(text);
+}
+
+/* 原始对话框版气泡：毛玻璃、左下小尾巴、署名「我」 */
+function todayHeroHtml(text) {
+  return `
+    <div class="ai-bubble today-hero" id="hero-bubble">
+      <div class="ai-bubble-content">
+        <span class="ai-text">${hlText(text)}</span>
+        <span class="ai-signature">—— 我</span>
+      </div>
+    </div>`;
 }
 
 /* 用 AI 个性化文案刷新英雄气泡（失败时保留规则版） */
@@ -592,15 +500,17 @@ async function refreshHero() {
   const total = store.today.tasks.length;
   const prio = store.today.tasks.filter(t => t.priority && !t.done).length;
   const h = new Date().getHours();
-  if (total === 0) return;
+  const LOW = ['😔', '😣', '😞', '😟', '😢', '😩', '😫', '😪', '😰', '😥'];
+  if (total === 0) return;            // 无任务文案不刷新，保留规则版
+  if (undone === 0) return;           // 全部完成文案不刷新
+  if (store.today.status && LOW.includes(store.today.status)) return;  // 状态偏低文案不刷新
   let trigger = 'morning';
-  if (undone === 0) trigger = 'all_done';
-  else if (h >= 18) trigger = 'evening';
+  if (h >= 18) trigger = 'evening';
   _heroBusy = true;
   try {
     const smart = await AI.copySmart(trigger, { total: undone, done, priorityCount: prio });
     if (smart && b.isConnected) {
-      const txt = b.querySelector('.text');
+      const txt = b.querySelector('.ai-text');
       if (txt) txt.innerHTML = hlText(smart);
       else b.innerHTML = hlText(smart);
     }

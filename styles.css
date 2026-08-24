@@ -555,6 +555,24 @@ html[data-theme="dark"] .ai-bubble .who{color:#A6A0AE}
 .ai-bubble .who .dot{width:16px;height:16px;border-radius:50%;background:url('icons/mo-avatar.png') center/cover no-repeat, linear-gradient(135deg,var(--primary),var(--accent));color:transparent;font-size:0;display:grid;place-items:center;font-weight:700}
 .ai-bubble .who .dot.done{background:var(--leaf,#7FB97A)}
 
+/* 今日页原始对话框版气泡：毛玻璃、右下4px圆角、左下小尾巴、署名「我」 */
+.ai-bubble.today-hero{border-radius:16px 16px 16px 4px;margin:12px 0 16px 0;max-width:85%}
+.ai-bubble.today-hero::before{display:none}
+.ai-bubble.today-hero::after{
+  content:'';position:absolute;bottom:-8px;left:16px;width:12px;height:12px;
+  background:rgba(255,255,255,.75);
+  backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);
+  border-radius:0 0 0 4px;
+  border-bottom:.5px solid rgba(212,184,217,.15);
+  border-left:.5px solid rgba(212,184,217,.15);
+  clip-path:polygon(0 0,100% 0,0 100%);
+}
+html[data-theme="dark"] .ai-bubble.today-hero::after{background:rgba(44,40,49,.78);border-color:rgba(255,255,255,.1)}
+.ai-bubble.today-hero .ai-text{font-size:15px;line-height:1.6;color:#1C1C1E;display:block}
+html[data-theme="dark"] .ai-bubble.today-hero .ai-text{color:#F2EFF5}
+.ai-bubble.today-hero .ai-signature{font-size:12px;color:#8E8E93;display:block;text-align:right;margin-top:4px}
+html[data-theme="dark"] .ai-bubble.today-hero .ai-signature{color:#A6A0AE}
+
 /* Toast 提醒（小程序式：贴近底部 TabBar 上方） */
 #toast-root{
   position:fixed;left:0;right:0;top:auto;bottom:calc(84px + env(safe-area-inset-bottom));

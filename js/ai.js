@@ -1118,12 +1118,38 @@ c) drop：不值得记录
     return Math.max(0, Math.min(5, count));
   }
 
+  /* ================= 任务属性标签（碎片/顺路/大块时间/依赖天气） ================= */
+  const FRAG_WAY = ['取快递', '寄快递', '拿快递', '取件', '取外卖', '拿外卖', '打印', '复印', '超市', '药店', '银行', '取钱', '送文件', '买菜', '购物', '买东西', '逛超市', '拿药', '缴费', '加油', '洗车', '接人'];
+  const FRAG_WEATHER = ['洗晒', '晾晒', '晒被子', '晾衣服', '洗衣服晒', '户外', '跑步', '散步', '骑车', '爬山', '拍照', '种花', '浇花', '打球', '放风筝', '野餐'];
+
+  /** AI 自动识别任务属性：大块时间 / 依赖天气 / 顺路 / 碎片（优先级从高到低） */
+  function classifyFragment(text, estMin) {
+    if (!text) return '';
+    const t = String(text);
+    if (estMin && Number(estMin) >= 60) return '大块时间';
+    if (FRAG_WEATHER.some(k => t.includes(k))) return '依赖天气';
+    if (FRAG_WAY.some(k => t.includes(k))) return '顺路';
+    if (isFragTask(t, estMin)) return '碎片';
+    return '';
+  }
+
+  /** 属性标签对应的 AI 推荐话术 */
+  function fragmentSuggestion(task) {
+    const f = task && task.fragmentType;
+    if (f === '顺路') return '出门时顺路就能完成，不用专门跑一趟。';
+    if (f === '碎片') return '这件小事很快，利用碎片时间做掉吧。';
+    if (f === '大块时间') return '这件需要专注，安排在不被打扰的时段更顺手。';
+    if (f === '依赖天气') return '看天气情况，晴朗的日子更适合做这件。';
+    return '';
+  }
+
   return {
     goalDecompose, ocrSimulate, copy, copySmart,
     weeklyReport, weeklyNarration, monthlyReport, monthlyNarration,
     suggestTomorrow, tomorrowPlan, userContext,
     buildSlots, routeSuggest, routeSuggestRule, inboxSuggest, inboxSuggestSmart,
     isFragTask, currentFreeSlot, countFragSlots, fragCandidates,
+    classifyFragment, fragmentSuggestion,
     TAGS, TAG_KEYWORDS, autoTag, tagOf, tagStyle, recordTag, recordTagCorrection,
     countTasksOnDate, dragConflict, monthDensity, freeDayCheck, adaptTaskCount
   };
